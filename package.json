@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && set ELECTRON_RUN_AS_NODE=&& electron .\"",
     "build": "tsc -p tsconfig.electron.json && vite build && electron-builder",
+    "build:win": "electron-builder --win",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "preview": "vite preview"
@@ -30,6 +31,7 @@
   "build": {
     "appId": "com.animegate.translator",
     "productName": "AnimeGate Translator",
+    "artifactName": "AnimeGate-Translator-Setup.exe",
     "directories": {
       "output": "release"
     },
@@ -49,6 +51,15 @@
     "win": {
       "target": "nsis",
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AnimeGate Translator",
+      "displayLanguageSelector": false
     }
   }
 }
