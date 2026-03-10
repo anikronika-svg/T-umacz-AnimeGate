@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\(x86\\)/**)",
+      "Bash(powershell.exe -Command \"Get-Command npm | Select-Object -ExpandProperty Source\")",
+      "Bash(powershell.exe -Command \"node --version; npm --version\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Program Files\\\\'' | Where-Object { $_.Name -like ''*node*'' -or $_.Name -like ''*npm*'' }\")",
+      "Read(//c/Users/Adrian/AppData/Roaming/**)",
+      "Read(//c/Users/Adrian/**)",
+      "Bash(npx tsc --noEmit)",
+      "Read(//c/Users/Darwin/Desktop/Tłumacz AnimeGate/src/**)",
+      "Bash(npm run:*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\Adrian\\.claude\\projects\\c--Users-Adrian-Desktop-T-umacz-AnimeGate"
+    ]
+  }
+}
