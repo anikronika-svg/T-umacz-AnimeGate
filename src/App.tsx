@@ -3207,6 +3207,7 @@ export default function App(): React.ReactElement {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const lastLineSyncFromVideoRef = useRef<number | null>(null)
   const pauseAtAfterLineRef = useRef<number | null>(null)
+  const hydratedProjectIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     rowsDataRef.current = rowsData
@@ -3223,10 +3224,24 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     const active = seriesProjects.find(project => project.id === currentProjectId)
     if (!active) return
-    setSourceLang(active.sourceLang || 'en')
-    setTargetLang(active.targetLang || 'pl')
-    setSelectedModelId(active.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID)
-    setStyleSettings(loadProjectStyleSettings(active.id, BASE_PROJECT_CHARACTERS))
+
+    const isFirstHydrationForProject = hydratedProjectIdRef.current !== currentProjectId
+    if (isFirstHydrationForProject) {
+      setSourceLang(active.sourceLang || 'en')
+      setTargetLang(active.targetLang || 'pl')
+      setSelectedModelId(active.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID)
+      setStyleSettings(loadProjectStyleSettings(active.id, BASE_PROJECT_CHARACTERS))
+      // Reload per-projekt video config (klucze rozdzielone po projectId)
+      const videoCfg = loadVideoProjectConfig(active.id)
+      setVideoPath(videoCfg.videoPath)
+      setVideoCollapsed(videoCfg.videoCollapsed)
+      setVideoHeight(videoCfg.videoHeight)
+      setAutoPlayOnLineClick(videoCfg.autoPlayOnLineClick)
+      setPreRollSec(videoCfg.preRollSec)
+      setPostRollSec(videoCfg.postRollSec)
+      hydratedProjectIdRef.current = currentProjectId
+    }
+
     setMemoryStore(prev => {
       if (prev.projects.some(project => project.id === active.id)) return prev
       return {
@@ -3234,15 +3249,15 @@ export default function App(): React.ReactElement {
         projects: [...prev.projects, { id: active.id, name: active.title, lastUpdated: active.lastUpdated.slice(0, 10) }],
       }
     })
-    // Reload per-projekt video config (klucze rozdzielone po projectId)
-    const videoCfg = loadVideoProjectConfig(active.id)
-    setVideoPath(videoCfg.videoPath)
-    setVideoCollapsed(videoCfg.videoCollapsed)
-    setVideoHeight(videoCfg.videoHeight)
-    setAutoPlayOnLineClick(videoCfg.autoPlayOnLineClick)
-    setPreRollSec(videoCfg.preRollSec)
-    setPostRollSec(videoCfg.postRollSec)
   }, [currentProjectId, seriesProjects])
+
+  useEffect(() => {
+    // Fallback ustawiamy tylko gdy aktualnie wybrany silnik nie istnieje na liscie.
+    // Dzięki temu ręczny wybór użytkownika nie jest nadpisywany przy zwykłym rerenderze.
+    const isValid = TRANSLATION_MODEL_OPTIONS.some(option => option.id === selectedModelId)
+    if (isValid) return
+    setSelectedModelId(DEFAULT_TRANSLATION_MODEL_ID)
+  }, [selectedModelId])
 
   const upsertSeriesProjectMeta = (
     projectId: string,
@@ -3263,12 +3278,31 @@ export default function App(): React.ReactElement {
         }
         return [...prev, created]
       }
+      const nextTitle = (updates.title ?? existing.title).trim() || existing.id
+      const nextAnilistId = updates.anilistId === undefined ? existing.anilistId : updates.anilistId
+      const nextPreferredModelId = updates.preferredModelId ?? existing.preferredModelId
+      const nextSourceLang = updates.sourceLang ?? existing.sourceLang
+      const nextTargetLang = updates.targetLang ?? existing.targetLang
+
+      const hasAnyChange = (
+        nextTitle !== existing.title
+        || nextAnilistId !== existing.anilistId
+        || nextPreferredModelId !== existing.preferredModelId
+        || nextSourceLang !== existing.sourceLang
+        || nextTargetLang !== existing.targetLang
+      )
+      if (!hasAnyChange) return prev
+
       return prev.map(project => (
         project.id === projectId
           ? {
             ...project,
             ...updates,
-            title: (updates.title ?? project.title).trim() || project.id,
+            title: nextTitle,
+            anilistId: nextAnilistId,
+            preferredModelId: nextPreferredModelId,
+            sourceLang: nextSourceLang,
+            targetLang: nextTargetLang,
             lastUpdated: now,
           }
           : project
