@@ -1,3 +1,12 @@
+import {
+  createDefaultCharacterSpeechProfile,
+  createDefaultGlobalStyleProfile,
+  normalizeCharacterSpeechProfile,
+  normalizeGlobalStyleProfile,
+  type CharacterSpeechProfile,
+  type ProjectGlobalStyleProfile,
+} from './project/characterProfileModel'
+
 export type CharacterGender = 'Male' | 'Female' | 'Unknown'
 
 export type TranslationStyleId =
@@ -41,15 +50,8 @@ export interface CharacterArchetypeOption {
   toneRule: string
 }
 
-export interface CharacterStyleProfile {
+export type CharacterStyleProfile = CharacterSpeechProfile & {
   archetype: CharacterArchetypeId
-  speakingTraits: string
-  characterNote: string
-  anilistDescription: string
-  mannerOfAddress: string
-  politenessLevel: string
-  vocabularyType: string
-  temperament: string
 }
 
 export interface CharacterStyleAssignment {
@@ -66,6 +68,7 @@ export interface CharacterStyleAssignment {
 export interface ProjectTranslationStyleSettings {
   projectId: string
   globalStyle: TranslationStyleId
+  globalStyleProfile: ProjectGlobalStyleProfile
   characters: CharacterStyleAssignment[]
   updatedAt: string
 }
@@ -205,30 +208,11 @@ export function getArchetypeToneRule(archetypeId: CharacterArchetypeId): string 
 }
 
 export function createDefaultProfile(): CharacterStyleProfile {
-  return {
-    archetype: 'default',
-    speakingTraits: '',
-    characterNote: '',
-    anilistDescription: '',
-    mannerOfAddress: '',
-    politenessLevel: '',
-    vocabularyType: '',
-    temperament: '',
-  }
+  return normalizeCharacterSpeechProfile(createDefaultCharacterSpeechProfile()) as CharacterStyleProfile
 }
 
 function normalizeProfile(profile?: Partial<CharacterStyleProfile> | null): CharacterStyleProfile {
-  const defaults = createDefaultProfile()
-  return {
-    archetype: profile?.archetype ?? defaults.archetype,
-    speakingTraits: profile?.speakingTraits ?? defaults.speakingTraits,
-    characterNote: profile?.characterNote ?? defaults.characterNote,
-    anilistDescription: profile?.anilistDescription ?? defaults.anilistDescription,
-    mannerOfAddress: profile?.mannerOfAddress ?? defaults.mannerOfAddress,
-    politenessLevel: profile?.politenessLevel ?? defaults.politenessLevel,
-    vocabularyType: profile?.vocabularyType ?? defaults.vocabularyType,
-    temperament: profile?.temperament ?? defaults.temperament,
-  }
+  return normalizeCharacterSpeechProfile(profile) as CharacterStyleProfile
 }
 
 export function createProjectStyleSettings(
@@ -238,6 +222,7 @@ export function createProjectStyleSettings(
   return {
     projectId,
     globalStyle: 'neutral',
+    globalStyleProfile: createDefaultGlobalStyleProfile('neutral'),
     updatedAt: new Date().toISOString(),
     characters: characters.map(character => ({
       ...character,
@@ -270,6 +255,7 @@ export function loadProjectStyleSettings(
     return {
       projectId,
       globalStyle: parsed.globalStyle ?? 'neutral',
+      globalStyleProfile: normalizeGlobalStyleProfile(parsed.globalStyleProfile, parsed.globalStyle ?? 'neutral'),
       updatedAt: parsed.updatedAt ?? new Date().toISOString(),
       characters: [
         ...baseCharacters.map(base => {
@@ -335,6 +321,10 @@ export function buildTranslationStyleContext(
 
   if (character?.profile.characterNote) {
     chunks.push(`Notatka postaci: ${character.profile.characterNote}`)
+  }
+
+  if (character?.profile.personalitySummary) {
+    chunks.push(`Skrot osobowosci: ${character.profile.personalitySummary}`)
   }
 
   if (character?.profile.mannerOfAddress) {

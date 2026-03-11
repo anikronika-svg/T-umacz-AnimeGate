@@ -1,11 +1,16 @@
 import {
   createDefaultProfile,
+  createProjectStyleSettings,
   type CharacterArchetypeId,
   type CharacterGender,
   type CharacterStyleAssignment,
   type ProjectTranslationStyleSettings,
   type TranslationStyleId,
 } from '../translationStyle'
+import {
+  normalizeGlobalStyleProfile,
+  type ProjectGlobalStyleProfile,
+} from './characterProfileModel'
 
 export const PROJECT_SCHEMA_VERSION = 1
 
@@ -13,6 +18,7 @@ export interface DiskProjectCharacterProfile {
   archetype: string
   speakingTraits: string
   characterNote: string
+  personalitySummary?: string
   anilistDescription: string
   mannerOfAddress: string
   politenessLevel: string
@@ -60,6 +66,13 @@ export interface DiskProjectConfigV1 {
   translationStyleSettings: {
     projectId: string
     globalStyle: string
+    globalStyleProfile?: {
+      styleId: string
+      tone?: string
+      register?: string
+      naturalness?: string
+      notes?: string
+    }
     characters: DiskProjectCharacter[]
     updatedAt: string
   }
@@ -106,6 +119,7 @@ function mapCharacterToDisk(character: CharacterStyleAssignment): DiskProjectCha
       archetype: character.profile.archetype,
       speakingTraits: character.profile.speakingTraits,
       characterNote: character.profile.characterNote,
+      personalitySummary: character.profile.personalitySummary,
       anilistDescription: character.profile.anilistDescription,
       mannerOfAddress: character.profile.mannerOfAddress,
       politenessLevel: character.profile.politenessLevel,
@@ -129,6 +143,7 @@ function mapDiskToCharacter(character: DiskProjectCharacter, fallbackId: number)
       archetype: (character.profile?.archetype as CharacterArchetypeId) || defaults.archetype,
       speakingTraits: character.profile?.speakingTraits || defaults.speakingTraits,
       characterNote: character.profile?.characterNote || defaults.characterNote,
+      personalitySummary: character.profile?.personalitySummary || defaults.personalitySummary,
       anilistDescription: character.profile?.anilistDescription || defaults.anilistDescription,
       mannerOfAddress: character.profile?.mannerOfAddress || defaults.mannerOfAddress,
       politenessLevel: character.profile?.politenessLevel || defaults.politenessLevel,
@@ -164,6 +179,7 @@ export function buildDiskProjectConfig(input: BuildProjectConfigInput): DiskProj
     translationStyleSettings: {
       projectId: input.projectId,
       globalStyle: input.styleSettings.globalStyle,
+      globalStyleProfile: input.styleSettings.globalStyleProfile,
       characters: input.styleSettings.characters.map(mapCharacterToDisk),
       updatedAt: now,
     },
@@ -184,9 +200,19 @@ export function hydrateStateFromDiskProject(config: DiskProjectConfigV1): Hydrat
       ? config.characterWorkflow.characters
       : []
 
+  const fallbackStyleSettings = createProjectStyleSettings(projectId, [])
+  const globalStyle = (config.translationStyleSettings?.globalStyle as TranslationStyleId) || 'neutral'
+  const globalStyleProfile: ProjectGlobalStyleProfile = normalizeGlobalStyleProfile(
+    config.translationStyleSettings?.globalStyleProfile,
+    globalStyle,
+  )
+
   const styleSettings: ProjectTranslationStyleSettings = {
     projectId,
-    globalStyle: (config.translationStyleSettings?.globalStyle as TranslationStyleId) || 'neutral',
+    globalStyle,
+    globalStyleProfile: globalStyleProfile.styleId
+      ? globalStyleProfile
+      : fallbackStyleSettings.globalStyleProfile,
     characters: styleCharacters.map((item, idx) => mapDiskToCharacter(item, idx + 1)),
     updatedAt: config.translationStyleSettings?.updatedAt || new Date().toISOString(),
   }

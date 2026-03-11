@@ -77,6 +77,7 @@ interface DiskProjectCharacterProfile {
   archetype: string
   speakingTraits: string
   characterNote: string
+  personalitySummary?: string
   anilistDescription: string
   mannerOfAddress: string
   politenessLevel: string
@@ -124,6 +125,13 @@ interface DiskProjectConfigV1 {
   translationStyleSettings: {
     projectId: string
     globalStyle: string
+    globalStyleProfile?: {
+      styleId: string
+      tone?: string
+      register?: string
+      naturalness?: string
+      notes?: string
+    }
     characters: DiskProjectCharacter[]
     updatedAt: string
   }

@@ -335,3 +335,29 @@
     - eliminuje dokladanie duplikatow podczas masowego dodania castu.
 - Status:
   - etap 1 (bugfix duplikacji) zamkniety buildowo; kolejne etapy obejma model profilu i automatyczna analize AniList.
+
+## 20) Etap 2: uporzadkowanie modelu profilu postaci i stylu globalnego (v1.0.8)
+- Cel:
+  - jawnie rozdzielic dane:
+    - globalny styl projektu (ton calosci tlumaczenia),
+    - indywidualny profil mowy postaci.
+- Wdrozone zmiany modelu:
+  - nowy modul `src/project/characterProfileModel.ts`:
+    - `CharacterSpeechProfile`
+    - `ProjectGlobalStyleProfile`
+    - helpery normalizacji i domyslnych wartosci.
+  - rozszerzony profil postaci o `personalitySummary`.
+  - `ProjectTranslationStyleSettings` ma teraz jawny `globalStyleProfile` obok `globalStyle`.
+- Wdrozone zmiany mapperow:
+  - `src/project/projectMapper.ts`:
+    - zapis i odczyt `globalStyleProfile`,
+    - mapowanie `personalitySummary` w profilu postaci,
+    - fallbacki dla starych projektow bez nowych pol.
+  - `electron/projectStorage.ts` i `electron/preload.ts`:
+    - aktualizacja kontraktow `DiskProjectConfigV1` o nowe pola (opcjonalne, kompatybilne).
+- Kompatybilnosc:
+  - zachowano `schemaVersion=1`,
+  - stare projekty (bez `globalStyleProfile` i bez `personalitySummary`) sa poprawnie odczytywane przez fallbacki.
+- Zakres celowo ograniczony:
+  - bez ciezkiej przebudowy UI Kroku 2/3 na tym etapie,
+  - fundament danych gotowy pod kolejny etap automatycznej analizy AniList.
