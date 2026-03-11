@@ -3,7 +3,15 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { createHash } from 'crypto'
 import { spawn } from 'child_process'
-import { initializeAutoUpdate } from './updater'
+import {
+  checkForUpdates,
+  downloadUpdate,
+  getUpdaterStatus,
+  initializeAutoUpdate,
+  installUpdate,
+  subscribeUpdaterStatus,
+  type UpdaterStatusPayload,
+} from './updater'
 
 const OPEN_STATE_FILE = 'open-state.json'
 
@@ -497,8 +505,26 @@ function setupFileIpc(): void {
   })
 }
 
+function setupUpdaterIpc(): void {
+  const broadcastStatus = (status: UpdaterStatusPayload): void => {
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('updater:status', status)
+    })
+  }
+
+  subscribeUpdaterStatus(status => {
+    broadcastStatus(status)
+  })
+
+  ipcMain.handle('updater:getStatus', async () => getUpdaterStatus())
+  ipcMain.handle('updater:checkForUpdates', async () => checkForUpdates())
+  ipcMain.handle('updater:downloadUpdate', async () => downloadUpdate())
+  ipcMain.handle('updater:installUpdate', async () => installUpdate())
+}
+
 app.whenReady().then(() => {
   setupFileIpc()
+  setupUpdaterIpc()
   createWindow()
   void initializeAutoUpdate()
 

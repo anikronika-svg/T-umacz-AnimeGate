@@ -10,4 +10,17 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     getApiConfig: () => electron_1.ipcRenderer.invoke('api:getConfig'),
     saveApiConfig: (config) => electron_1.ipcRenderer.invoke('api:saveConfig', config),
     apiRequest: (args) => electron_1.ipcRenderer.invoke('api:request', args),
+    getUpdaterStatus: () => electron_1.ipcRenderer.invoke('updater:getStatus'),
+    checkForUpdates: () => electron_1.ipcRenderer.invoke('updater:checkForUpdates'),
+    downloadUpdate: () => electron_1.ipcRenderer.invoke('updater:downloadUpdate'),
+    installUpdate: () => electron_1.ipcRenderer.invoke('updater:installUpdate'),
+    onUpdaterStatus: (callback) => {
+        const listener = (_event, status) => {
+            callback(status);
+        };
+        electron_1.ipcRenderer.on('updater:status', listener);
+        return () => {
+            electron_1.ipcRenderer.removeListener('updater:status', listener);
+        };
+    },
 });

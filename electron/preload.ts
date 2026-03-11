@@ -73,6 +73,18 @@ interface ApiRequestResult {
   }
 }
 
+interface UpdaterStatusPayload {
+  phase: 'idle' | 'checking-for-update' | 'update-available' | 'update-not-available' | 'download-started' | 'download-progress' | 'update-downloaded' | 'installing' | 'error'
+  message: string
+  timestamp: string
+  version?: string
+  percent?: number
+  bytesPerSecond?: number
+  transferred?: number
+  total?: number
+  error?: string
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   openSubtitleFile: (args?: OpenSubtitleArgs): Promise<OpenSubtitleResult> =>
     ipcRenderer.invoke('file:openSubtitle', args),
@@ -90,4 +102,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('api:saveConfig', config),
   apiRequest: (args: ApiRequestArgs): Promise<ApiRequestResult> =>
     ipcRenderer.invoke('api:request', args),
+  getUpdaterStatus: (): Promise<UpdaterStatusPayload> =>
+    ipcRenderer.invoke('updater:getStatus'),
+  checkForUpdates: (): Promise<UpdaterStatusPayload> =>
+    ipcRenderer.invoke('updater:checkForUpdates'),
+  downloadUpdate: (): Promise<UpdaterStatusPayload> =>
+    ipcRenderer.invoke('updater:downloadUpdate'),
+  installUpdate: (): Promise<UpdaterStatusPayload> =>
+    ipcRenderer.invoke('updater:installUpdate'),
+  onUpdaterStatus: (callback: (status: UpdaterStatusPayload) => void): (() => void) => {
+    const listener = (_event: unknown, status: UpdaterStatusPayload): void => {
+      callback(status)
+    }
+    ipcRenderer.on('updater:status', listener)
+    return () => {
+      ipcRenderer.removeListener('updater:status', listener)
+    }
+  },
 })

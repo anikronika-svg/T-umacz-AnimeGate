@@ -388,8 +388,23 @@ function setupFileIpc() {
         }
     });
 }
+function setupUpdaterIpc() {
+    const broadcastStatus = (status) => {
+        electron_1.BrowserWindow.getAllWindows().forEach(win => {
+            win.webContents.send('updater:status', status);
+        });
+    };
+    (0, updater_1.subscribeUpdaterStatus)(status => {
+        broadcastStatus(status);
+    });
+    electron_1.ipcMain.handle('updater:getStatus', async () => (0, updater_1.getUpdaterStatus)());
+    electron_1.ipcMain.handle('updater:checkForUpdates', async () => (0, updater_1.checkForUpdates)());
+    electron_1.ipcMain.handle('updater:downloadUpdate', async () => (0, updater_1.downloadUpdate)());
+    electron_1.ipcMain.handle('updater:installUpdate', async () => (0, updater_1.installUpdate)());
+}
 electron_1.app.whenReady().then(() => {
     setupFileIpc();
+    setupUpdaterIpc();
     createWindow();
     void (0, updater_1.initializeAutoUpdate)();
     electron_1.app.on('activate', () => {

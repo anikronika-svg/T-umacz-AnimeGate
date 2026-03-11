@@ -20,6 +20,7 @@ import {
 } from './translationStyle'
 import { getAnimeCharactersForSeries, searchAnimeByTitle, type AniListAnimeResult, type AniListCharacter } from './anilist'
 import { buildAssOrSsaContent, parseAssOrSsa, type ParsedSubtitleFile } from './subtitleParser'
+import { useUpdaterStatus, type UpdaterStatus } from './hooks/useUpdaterStatus'
 
 const C = {
   bg0: '#1e1e2e',
@@ -1162,6 +1163,45 @@ function ProjectBar({
       <button style={{ ...BASE_BTN, opacity: 0.4, cursor: 'not-allowed' }} disabled title="Funkcja w przygotowaniu">Analizuj styl</button>
       <span style={{ marginLeft: 10, fontSize: 11, color: C.textDim }}>Plik: {loadedFileName}</span>
       <span style={{ marginLeft: 8, fontSize: 11, color: C.textDim }}>Wideo: {loadedVideoName}</span>
+    </div>
+  )
+}
+
+function updaterColorForPhase(phase: UpdaterStatus['phase']): string {
+  if (phase === 'error') return C.accentR
+  if (phase === 'update-available' || phase === 'download-progress' || phase === 'download-started') return C.accentY
+  if (phase === 'update-downloaded') return C.accentG
+  return C.textDim
+}
+
+function UpdateStatusBar({
+  status,
+  isSupported,
+  onCheck,
+  onDownload,
+  onInstall,
+}: {
+  status: UpdaterStatus
+  isSupported: boolean
+  onCheck: () => void
+  onDownload: () => void
+  onInstall: () => void
+}): React.ReactElement {
+  const canCheck = isSupported && status.phase !== 'checking-for-update' && status.phase !== 'download-progress' && status.phase !== 'installing'
+  const canDownload = isSupported && status.phase === 'update-available'
+  const canInstall = isSupported && status.phase === 'update-downloaded'
+  const statusText = status.phase === 'download-progress' && typeof status.percent === 'number'
+    ? `${status.message} (${status.percent.toFixed(1)}%)`
+    : status.message
+
+  return (
+    <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#171920', display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ color: updaterColorForPhase(status.phase), minWidth: 430, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        Aktualizacje: {statusText}
+      </span>
+      <button style={{ ...BASE_BTN, opacity: canCheck ? 1 : 0.5 }} disabled={!canCheck} onClick={onCheck}>Sprawdz</button>
+      <button style={{ ...BASE_BTN, opacity: canDownload ? 1 : 0.5 }} disabled={!canDownload} onClick={onDownload}>Pobierz</button>
+      <button style={{ ...BASE_BTN, opacity: canInstall ? 1 : 0.5 }} disabled={!canInstall} onClick={onInstall}>Instaluj</button>
     </div>
   )
 }
@@ -3200,6 +3240,13 @@ export default function App(): React.ReactElement {
   const [targetLang, setTargetLang] = useState('pl')
   const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => loadProjectStyleSettings(currentProjectId, BASE_PROJECT_CHARACTERS))
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
+  const {
+    status: updaterStatus,
+    isSupported: isUpdaterSupported,
+    checkForUpdates,
+    downloadUpdate,
+    installUpdate,
+  } = useUpdaterStatus()
   const stopTranslationRef = useRef(false)
   const activeTranslationAbortRef = useRef<AbortController | null>(null)
   const providerCooldownUntilRef = useRef<number>(0)
@@ -5215,6 +5262,13 @@ export default function App(): React.ReactElement {
       <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#171920', maxHeight: 62, overflow: 'auto' }}>
         Log tlumaczenia: {translationLogs[0] ?? 'brak'}
       </div>
+      <UpdateStatusBar
+        status={updaterStatus}
+        isSupported={isUpdaterSupported}
+        onCheck={() => { void checkForUpdates() }}
+        onDownload={() => { void downloadUpdate() }}
+        onInstall={() => { void installUpdate() }}
+      />
       <EditorPanel row={selectedRow} onChangeTarget={handleChangeLineTarget} />
       <SuggestionsPanel
         row={selectedRow}

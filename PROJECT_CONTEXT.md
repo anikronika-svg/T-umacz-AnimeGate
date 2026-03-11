@@ -3,8 +3,9 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.1`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.2`.
 - Ostatnie commity:
+  - `48ca83b` – workflow release + bump do `1.0.1`
   - `35138bf` – foundation auto-update (electron-updater + publish config + release:win)
   - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
   - `01ba205` – konfiguracja instalatora NSIS + `build:win`
@@ -14,6 +15,7 @@
 - Electron (main/preload) + React + TypeScript + Vite.
 - Kluczowe pliki:
   - `src/App.tsx` – glowny renderer i logika aplikacji.
+  - `src/hooks/useUpdaterStatus.ts` – hook renderera do subskrypcji statusu updatera i akcji check/download/install.
   - `src/subtitleParser.ts` – parser i zapis ASS/SSA (`tlmode`).
   - `src/anilist.ts` – integracja AniList i merge castu serii.
   - `src/translationStyle.ts` – style, archetypy, profile postaci, kontekst tlumaczenia.
@@ -157,14 +159,28 @@
     - `update-downloaded`
   - check for updates uruchamiany automatycznie po starcie aplikacji (tylko gdy `app.isPackaged=true`),
   - jawny, bezpieczny guard dla dev mode (`disabled-dev` log, brak check).
-- Nadal NIE jest wdrozone:
-  - IPC/preload kanały updatera,
-  - UI statusu aktualizacji,
-  - komendy użytkownika check/download/install z renderer.
-- Uwaga dot. repo prywatnego:
-  - visibility repo nie zostala potwierdzona narzedziowo w tym srodowisku (brak `gh`, brak dostepu do GitHub API),
-  - jezeli repo jest prywatne, klient auto-update bedzie wymagal dostepu do release assets (token/pośrednia dystrybucja), co wpływa na bezpieczenstwo i UX.
-- Następny krok: dodać IPC/preload API dla updatera (status + komendy), nadal minimalny wpływ na UI.
+- Etap IPC + preload + minimalny UI został wdrozony:
+  - IPC commandy:
+    - `updater:getStatus`
+    - `updater:checkForUpdates`
+    - `updater:downloadUpdate`
+    - `updater:installUpdate`
+  - IPC event statusu:
+    - `updater:status` (broadcast z main process do rendererów)
+  - preload API (`window.electronAPI`):
+    - `getUpdaterStatus()`
+    - `checkForUpdates()`
+    - `downloadUpdate()`
+    - `installUpdate()`
+    - `onUpdaterStatus(callback) => unsubscribe`
+  - renderer:
+    - `useUpdaterStatus()` jako cienka warstwa konsumpcji statusu i akcji,
+    - minimalny pasek statusu w `App.tsx` z przyciskami `Sprawdz`, `Pobierz`, `Instaluj`.
+  - kontrakt statusu:
+    - fazy: `idle`, `checking-for-update`, `update-available`, `update-not-available`, `download-started`, `download-progress`, `update-downloaded`, `installing`, `error`.
+  - main process pozostaje źródłem prawdy dla update flow.
+- Nadal do domkniecia:
+  - finalny test E2E aktualizacji miedzy realnymi release (np. `1.0.1` -> `1.0.2`) na maszynie docelowej.
 
 ## 10) Wersjonowanie i release policy
 - Każda większa zmiana funkcjonalna:
@@ -173,3 +189,11 @@
   3) tag `vX.Y.Z` + push tagu
   4) GitHub Actions publikuje release assets i `latest.yml`
   5) aktualizacja `PROJECT_CONTEXT.md`
+
+## 11) Zmiany plikowe w etapie IPC/UI updatera
+- `electron/updater.ts` – rozszerzony o status store, subskrypcje, commandy updatera.
+- `electron/main.ts` – dodany `setupUpdaterIpc()` i broadcast statusów do renderer.
+- `electron/preload.ts` – jawne API updatera przez `contextBridge`.
+- `src/electron.d.ts` – typy updater API dla renderer.
+- `src/hooks/useUpdaterStatus.ts` – nowy hook.
+- `src/App.tsx` – lekki pasek statusu aktualizacji + akcje check/download/install.
