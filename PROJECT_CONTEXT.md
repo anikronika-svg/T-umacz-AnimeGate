@@ -318,3 +318,20 @@
     - `onOpenProjectStep`
     - `activeDiskProjectTitle`
   - bez zmiany zachowania UI/flow.
+
+## 19) Bugfix v1 (workflow postaci): dublowanie postaci w Kroku 1
+- Zdiagnozowane zrodlo:
+  - deduplikacja castu i postaci roboczych byla oparta glownie o `id` / `name+role`, co nie stabilizowalo danych przy ponownych merge (AniList + lokalny stan projektu).
+  - dodatkowo `addCastToWorkerByIds` budowal indeks `byName` tylko z `prev`, przez co w jednej operacji importu mogl dokladac powtorzenia zanim finalny merge je zobaczyl.
+- Wdrozone poprawki (u zrodla, bez maskowania UI):
+  - `dedupeAniListCast`:
+    - klucz glowny po znormalizowanej nazwie postaci (`name`), fallback po `id` gdy brak nazwy,
+    - stabilny merge pol (`gender`, `roleLabel`, opis, cechy, inferencje).
+  - `dedupeAssignments`:
+    - klucz glowny po znormalizowanej nazwie postaci,
+    - merge profilu i metadanych bez produkowania duplikatow przy hydracji/ponownym zapisie.
+  - `addCastToWorkerByIds`:
+    - aktualizacja mapy `byName` w trakcie tej samej operacji dodawania (nie tylko z `prev`),
+    - eliminuje dokladanie duplikatow podczas masowego dodania castu.
+- Status:
+  - etap 1 (bugfix duplikacji) zamkniety buildowo; kolejne etapy obejma model profilu i automatyczna analize AniList.

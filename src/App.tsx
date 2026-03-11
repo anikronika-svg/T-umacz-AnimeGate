@@ -2520,9 +2520,8 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
   const dedupeAniListCast = (list: AniListCharacter[]): AniListCharacter[] => {
     const byKey = new Map<string, AniListCharacter>()
     list.forEach(item => {
-      const key = Number.isFinite(item.id)
-        ? `id:${item.id}`
-        : characterKeyFromNameRole(item.name, item.roleLabel)
+      const normalizedName = normalizeCharacterName(item.name)
+      const key = normalizedName ? `name:${normalizedName}` : `id:${item.id}`
       const existing = byKey.get(key)
       if (!existing) {
         byKey.set(key, { ...item })
@@ -2530,9 +2529,11 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       }
       byKey.set(key, {
         ...existing,
+        id: existing.id || item.id,
         name: existing.name || item.name,
         imageUrl: existing.imageUrl || item.imageUrl,
-        gender: existing.gender === 'Unknown' ? item.gender : existing.gender,
+        roleLabel: existing.roleLabel === 'Unknown' ? item.roleLabel : existing.roleLabel,
+        gender: existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender,
         description: existing.description.length >= item.description.length ? existing.description : item.description,
         descriptionShort: existing.descriptionShort.length >= item.descriptionShort.length ? existing.descriptionShort : item.descriptionShort,
         personalityTraits: [...new Set([...(existing.personalityTraits ?? []), ...(item.personalityTraits ?? [])])].slice(0, 8),
@@ -2551,35 +2552,9 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     const byKey = new Map<string, CharacterStyleAssignment>()
     list.forEach(item => {
       const normalizedName = normalizeCharacterName(item.name)
-      const key = Number.isFinite(item.anilistCharacterId)
-        ? `id:${item.anilistCharacterId}`
-        : characterKeyFromNameRole(item.name, item.anilistRole)
+      const key = normalizedName ? `name:${normalizedName}` : characterKeyFromNameRole(item.name, item.anilistRole)
       const existing = byKey.get(key)
-      const sameNameEntry = [...byKey.entries()].find(([existingKey, entry]) => (
-        existingKey !== key
-        && normalizeCharacterName(entry.name) === normalizedName
-      ))
-      const sameName = sameNameEntry ? sameNameEntry[1] : null
-      const sameNameKey = sameNameEntry ? sameNameEntry[0] : null
       if (!existing) {
-        if (sameName && sameNameKey) {
-          const mergedProfile = {
-            ...sameName.profile,
-            speakingTraits: sameName.profile.speakingTraits.trim() || item.profile.speakingTraits.trim() || '',
-            characterNote: sameName.profile.characterNote.trim() || item.profile.characterNote.trim() || '',
-            anilistDescription: sameName.profile.anilistDescription.trim() || item.profile.anilistDescription.trim() || '',
-          }
-          byKey.set(sameNameKey, {
-            ...sameName,
-            anilistCharacterId: sameName.anilistCharacterId ?? item.anilistCharacterId ?? null,
-            anilistRole: sameName.anilistRole || item.anilistRole,
-            gender: sameName.gender === 'Unknown' ? item.gender : sameName.gender,
-            avatarColor: sameName.avatarColor || item.avatarColor,
-            style: sameName.style ?? item.style ?? null,
-            profile: mergedProfile,
-          })
-          return
-        }
         byKey.set(key, item)
         return
       }
@@ -2594,7 +2569,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         name: existing.name || item.name,
         anilistCharacterId: existing.anilistCharacterId ?? item.anilistCharacterId ?? null,
         anilistRole: existing.anilistRole || item.anilistRole,
-        gender: existing.gender === 'Unknown' ? item.gender : existing.gender,
+        gender: existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender,
         avatarColor: existing.avatarColor || item.avatarColor,
         style: existing.style ?? item.style ?? null,
         profile: mergedProfile,
@@ -2872,9 +2847,12 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
               ? [...new Set([...(existing.personalityTraits ?? []), ...cast.personalityTraits])].slice(0, 6)
               : existing.personalityTraits,
           }
+          byName.set(key, { item: next[idx], idx })
           return
         }
+        const newIdx = next.length
         next.push(cast)
+        byName.set(key, { item: cast, idx: newIdx })
       })
       return dedupeAniListCast(next)
     })
