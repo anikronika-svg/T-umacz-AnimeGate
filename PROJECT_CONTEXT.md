@@ -255,3 +255,31 @@
 ## 15) Otwarte braki do pełnego systemu projektów
 - Brak pełnej, oddzielnej persystencji tymczasowych wyników wyszukiwania AniList (lista wyników i zaznaczenia z lewego panelu Kroku 1).
 - Brak formalnych testów automatycznych E2E GUI dla scenariusza: utwórz projekt -> ustaw kroki 1/2/3 -> restart -> otwórz projekt -> weryfikacja UI.
+
+## 16) Wzmocnienie przypisan linii do postaci (v1.0.4)
+- Problem:
+  - samo `lineId` bylo zbyt slabe dla pracy miedzy odcinkami i przy ponownym imporcie plikow ASS.
+- Decyzja:
+  - zachowano kompatybilnosc `schemaVersion=1`,
+  - rozszerzono `lineCharacterAssignments` o opcjonalne `lineKey` (stabilny klucz linii),
+  - dodano bezpieczny fallback dopasowania po znormalizowanej nazwie surowego mowcy (`rawCharacter`).
+- Implementacja:
+  - nowy modul `src/project/assignmentMatching.ts`:
+    - buduje `lineKey` z: `startMs|endMs|style|normalized sourceRaw`,
+    - serializuje przypisania do projektu,
+    - odtwarza przypisania przez:
+      1) dopasowanie exact po `lineKey`,
+      2) fallback aliasowy po `rawCharacter` (zliczanie glosow i wybor najlepszego dopasowania).
+  - `src/App.tsx`:
+    - zapis przypisan przez mapper (`buildProjectLineAssignments`),
+    - odczyt przypisan do stanu projektu,
+    - zastosowanie przypisan przy imporcie napisow (`applyProjectLineAssignments`) przed ustawieniem `rows`.
+  - aktualizacja typow projektu:
+    - `src/project/projectMapper.ts`
+    - `electron/projectStorage.ts`
+    - `electron/preload.ts`
+- Efekt:
+  - przypisania linii sa trwale zapisywane i stabilniej odtwarzane po restarcie aplikacji,
+  - model jest lepiej przygotowany pod kolejne odcinki bez przebudowy UI.
+- Nadal otwarte:
+  - brak heurystyki semantycznej (np. fuzzy po tresci dialogu) dla skrajnych przypadkow, gdy timing i styl ulegaja duzym zmianom.

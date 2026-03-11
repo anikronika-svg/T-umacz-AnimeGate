@@ -27,6 +27,11 @@ import {
   hydrateStateFromDiskProject,
   type DiskProjectConfigV1,
 } from './project/projectMapper'
+import {
+  applyProjectLineAssignments,
+  buildProjectLineAssignments,
+  type ProjectLineAssignment,
+} from './project/assignmentMatching'
 
 const C = {
   bg0: '#1e1e2e',
@@ -3386,6 +3391,7 @@ export default function App(): React.ReactElement {
   const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => loadProjectStyleSettings(currentProjectId, BASE_PROJECT_CHARACTERS))
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
   const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(() => loadActiveDiskProject())
+  const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(() => !loadActiveDiskProject())
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
@@ -3409,6 +3415,10 @@ export default function App(): React.ReactElement {
 
   useEffect(() => {
     saveActiveDiskProject(activeDiskProject)
+  }, [activeDiskProject])
+
+  useEffect(() => {
+    if (!activeDiskProject) setProjectLineAssignments([])
   }, [activeDiskProject])
 
   useEffect(() => {
@@ -3869,13 +3879,9 @@ export default function App(): React.ReactElement {
     const projectId = projectIdOverride ?? currentProjectId
     const meta = seriesProjects.find(project => project.id === projectId)
     const title = titleOverride ?? meta?.title ?? projectId
-    const lineCharacterAssignments = rowsData
-      .map(row => ({
-        lineId: row.id,
-        rawCharacter: row.character,
-        resolvedCharacterName: resolveCharacterForLineName(row.character, styleSettings.characters)?.name ?? row.character,
-      }))
-      .filter(item => item.rawCharacter.trim().length > 0)
+    const lineCharacterAssignments = buildProjectLineAssignments(rowsData, rawCharacter => (
+      resolveCharacterForLineName(rawCharacter, styleSettings.characters)?.name ?? rawCharacter
+    ))
 
     return mapAppStateToProjectConfig({
       projectId,
@@ -3925,6 +3931,14 @@ export default function App(): React.ReactElement {
     setSelectedModelId(preferredModelId)
     setStyleSettings(restoredSettings)
     saveProjectStyleSettings(restoredSettings)
+    setProjectLineAssignments(
+      (config.characterWorkflow?.lineCharacterAssignments ?? []).map(item => ({
+        lineId: item.lineId,
+        rawCharacter: item.rawCharacter,
+        resolvedCharacterName: item.resolvedCharacterName,
+        lineKey: item.lineKey,
+      })),
+    )
     setCurrentProjectId(projectId)
     setProjectPickerId(projectId)
     setActiveDiskProject({
@@ -5212,10 +5226,14 @@ export default function App(): React.ReactElement {
       console.warn('Nie znaleziono linii Dialogue w pliku ASS/SSA.')
       return
     }
+    const assignmentApplied = applyProjectLineAssignments(parsed.rows, projectLineAssignments)
     setLoadedSubtitleFile(parsed)
-    setRowsData(parsed.rows)
-    setSelectedId(parsed.rows[0].id)
-    setSelectedLineIds(new Set([parsed.rows[0].id]))
+    setRowsData(assignmentApplied.rows)
+    setSelectedId(assignmentApplied.rows[0].id)
+    setSelectedLineIds(new Set([assignmentApplied.rows[0].id]))
+    if (assignmentApplied.applied > 0) {
+      appendTranslationLog(`Krok 0: przywrócono ${assignmentApplied.applied} przypisań postaci do linii.`)
+    }
     if (filePath) {
       setLoadedFilePath(filePath)
       setLoadedFileName(fileNameFromPath(filePath))

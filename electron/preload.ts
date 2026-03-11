@@ -118,6 +118,7 @@ interface DiskProjectConfigV1 {
       lineId: number
       rawCharacter: string
       resolvedCharacterName: string
+      lineKey?: string
     }>
   }
   translationStyleSettings: {
