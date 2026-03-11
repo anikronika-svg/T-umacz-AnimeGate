@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.18`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.19`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -630,3 +630,27 @@
   - po ponownym otwarciu projektu i pliku ASS przypisania sa przywracane przez `applyProjectLineAssignments`.
 - Architektura:
   - wydzielono komponent `CharacterAssignmentPanel` w `src/App.tsx` (bez ingerencji w pipeline tlumaczenia, parser ASS, waveform, updater i IPC).
+
+## 31) Inteligentne sugestie postaci do linii (v1.0.19)
+- Dodano heurystyczny ranking 2-3 kandydatow dla aktualnie zaznaczonej linii.
+- Nowy modul:
+  - `src/project/characterAssignmentSuggestions.ts`
+  - wejsciowe dane: zaznaczona linia, sasiednie linie, dostepne postacie projektu, historia ostatnio uzywanych postaci.
+  - wyjscie: posortowane sugestie `name + score + reasons` (top 3).
+- Heurystyka rankingu (v1):
+  - poprzednia przypisana linia (najsilniejszy sygnal),
+  - nastepna przypisana linia,
+  - bliskie linie o tym samym stylu,
+  - bliskosc czasowa sceny (roznica czasu start/end),
+  - historia ostatnio przypisywanych postaci,
+  - fallback do najczesciej przypisywanych postaci, gdy brak silnych sygnalow.
+- UI:
+  - panel `Sugestie (1/2/3)` pod lista postaci w lewym sidebarze,
+  - klik sugerowanej postaci przypisuje ja identycznie jak klik z listy postaci.
+- Skróty klawiaturowe:
+  - `1`, `2`, `3` zatwierdzaja odpowiednio pierwsza, druga i trzecia sugestie,
+  - aktywne tylko poza polami edycji i poza modalami.
+- Zachowanie:
+  - brak auto-przypisania bez akcji uzytkownika,
+  - po akcji uzytkownika kolumna `Postac` aktualizuje sie natychmiast,
+  - przypisania dalej zapisuja sie do projektu przez istniejacy autozapis (`lineCharacterAssignments`).

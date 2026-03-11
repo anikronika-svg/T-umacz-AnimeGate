@@ -39,6 +39,10 @@ import {
   buildProjectLineAssignments,
   type ProjectLineAssignment,
 } from './project/assignmentMatching'
+import {
+  buildCharacterAssignmentSuggestions,
+  type CharacterAssignmentSuggestion,
+} from './project/characterAssignmentSuggestions'
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import { CharacterNotesModal } from './components/CharacterNotesModal'
@@ -1184,12 +1188,14 @@ function CharacterAssignmentPanel({
   characters,
   selectedLineCount,
   activeCharacterName,
+  suggestions,
   onAssignCharacter,
   onClearAssignment,
 }: {
   characters: CharacterAssignmentSidebarItem[]
   selectedLineCount: number
   activeCharacterName: string
+  suggestions: CharacterAssignmentSuggestion[]
   onAssignCharacter: (characterName: string) => void
   onClearAssignment: () => void
 }): React.ReactElement {
@@ -1267,6 +1273,34 @@ function CharacterAssignmentPanel({
           </div>
         )}
       </div>
+      <div style={{ marginTop: 8, border: `1px solid ${C.borderB}`, background: '#171b28', padding: 6 }}>
+        <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 4 }}>Sugestie (1/2/3)</div>
+        <div style={{ display: 'grid', gap: 4 }}>
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={`${suggestion.name}-${index}`}
+              style={{
+                ...BASE_BTN,
+                width: '100%',
+                height: 24,
+                justifyContent: 'space-between',
+                background: '#243048',
+                borderColor: '#365176',
+              }}
+              onClick={() => onAssignCharacter(suggestion.name)}
+              title={suggestion.reasons.join(' | ')}
+            >
+              <span>{index + 1}. {suggestion.name}</span>
+              <span style={{ fontSize: 10, color: C.textDim }}>{suggestion.score}</span>
+            </button>
+          ))}
+          {suggestions.length === 0 && (
+            <div style={{ fontSize: 10, color: C.textDim, padding: '2px 4px' }}>
+              Brak sugestii dla tej linii.
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -1294,6 +1328,7 @@ function LeftSidebar({
   assignmentCharacters,
   selectedLineCount,
   activeAssignmentCharacter,
+  assignmentSuggestions,
   onAssignCharacter,
   onClearCharacterAssignment,
   activeDiskProjectTitle,
@@ -1321,6 +1356,7 @@ function LeftSidebar({
   assignmentCharacters: CharacterAssignmentSidebarItem[]
   selectedLineCount: number
   activeAssignmentCharacter: string
+  assignmentSuggestions: CharacterAssignmentSuggestion[]
   onAssignCharacter: (characterName: string) => void
   onClearCharacterAssignment: () => void
   activeDiskProjectTitle: string
@@ -1360,6 +1396,7 @@ function LeftSidebar({
         characters={assignmentCharacters}
         selectedLineCount={selectedLineCount}
         activeCharacterName={activeAssignmentCharacter}
+        suggestions={assignmentSuggestions}
         onAssignCharacter={onAssignCharacter}
         onClearAssignment={onClearCharacterAssignment}
       />
@@ -3769,6 +3806,7 @@ export default function App(): React.ReactElement {
   const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(() => loadActiveDiskProject())
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
+  const [recentCharacterHistory, setRecentCharacterHistory] = useState<string[]>([])
   const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(() => !loadActiveDiskProject())
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
@@ -3958,6 +3996,15 @@ export default function App(): React.ReactElement {
     })
     return [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl', { sensitivity: 'base' }))
   }, [styleSettings.characters])
+  const assignmentSuggestions = useMemo<CharacterAssignmentSuggestion[]>(() => {
+    return buildCharacterAssignmentSuggestions({
+      rows: rowsData,
+      selectedLineId: selectedId,
+      availableCharacters: assignmentCharacters.map(item => item.name),
+      recentCharacterHistory,
+      lastUsedCharacter: activeAssignmentCharacter,
+    })
+  }, [rowsData, selectedId, assignmentCharacters, recentCharacterHistory, activeAssignmentCharacter])
   const activeSeriesMeta = useMemo(
     () => seriesProjects.find(project => project.id === currentProjectId) ?? null,
     [seriesProjects, currentProjectId],
@@ -4470,6 +4517,10 @@ export default function App(): React.ReactElement {
       return nextRows
     })
     setActiveAssignmentCharacter(normalizedCharacterName)
+    setRecentCharacterHistory(prev => [
+      normalizedCharacterName,
+      ...prev.filter(item => normalizeCharacterName(item) !== normalizeCharacterName(normalizedCharacterName)),
+    ].slice(0, 10))
     appendTranslationLog(`Przypisano postac "${normalizedCharacterName}" do ${selectedLineIds.size} linii.`)
   }
 
@@ -4493,6 +4544,35 @@ export default function App(): React.ReactElement {
     setActiveAssignmentCharacter('')
     appendTranslationLog(`Wyczyszczono przypisanie postaci dla ${selectedLineIds.size} linii.`)
   }
+
+  useEffect(() => {
+    const handleSuggestionShortcuts = (event: KeyboardEvent): void => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (isApiOpen || isCharactersOpen || isMemoryOpen || isGenderCorrectionOpen || isProjectStepOpen) return
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase() ?? ''
+      const isTypingContext = tag === 'input'
+        || tag === 'textarea'
+        || target?.isContentEditable
+      if (isTypingContext) return
+      const index = event.key === '1' ? 0 : event.key === '2' ? 1 : event.key === '3' ? 2 : -1
+      if (index < 0 || index >= assignmentSuggestions.length) return
+      event.preventDefault()
+      applyCharacterToSelectedLines(assignmentSuggestions[index].name)
+    }
+
+    window.addEventListener('keydown', handleSuggestionShortcuts)
+    return () => window.removeEventListener('keydown', handleSuggestionShortcuts)
+  }, [
+    assignmentSuggestions,
+    isApiOpen,
+    isCharactersOpen,
+    isMemoryOpen,
+    isGenderCorrectionOpen,
+    isProjectStepOpen,
+    selectedLineIds,
+    rowsData,
+  ])
 
   const resolveMemoryTranslation = (row: DialogRow): string | null => {
     const exactMemory = memoryStore.entries
@@ -6112,6 +6192,7 @@ export default function App(): React.ReactElement {
           assignmentCharacters={assignmentCharacters}
           selectedLineCount={selectedLineIds.size}
           activeAssignmentCharacter={activeAssignmentCharacter}
+          assignmentSuggestions={assignmentSuggestions}
           onAssignCharacter={applyCharacterToSelectedLines}
           onClearCharacterAssignment={clearCharacterFromSelectedLines}
           activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
