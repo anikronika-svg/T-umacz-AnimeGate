@@ -9,6 +9,7 @@ const path_1 = __importDefault(require("path"));
 const crypto_1 = require("crypto");
 const child_process_1 = require("child_process");
 const updater_1 = require("./updater");
+const projectStorage_1 = require("./projectStorage");
 const OPEN_STATE_FILE = 'open-state.json';
 function getOpenStatePath() {
     return path_1.default.join(electron_1.app.getPath('userData'), OPEN_STATE_FILE);
@@ -386,6 +387,29 @@ function setupFileIpc() {
         finally {
             clearTimeout(timer);
         }
+    });
+    electron_1.ipcMain.handle('project:pickDirectory', async (_event, args) => {
+        const result = await electron_1.dialog.showOpenDialog({
+            title: args?.title ?? 'Wybierz folder',
+            properties: ['openDirectory', 'createDirectory'],
+            defaultPath: args?.defaultPath,
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+            return { canceled: true };
+        }
+        return { canceled: false, directoryPath: result.filePaths[0] };
+    });
+    electron_1.ipcMain.handle('project:create', async (_event, args) => {
+        const created = await (0, projectStorage_1.createProjectOnDisk)(args);
+        return { ok: true, ...created };
+    });
+    electron_1.ipcMain.handle('project:open', async (_event, projectDir) => {
+        const opened = await (0, projectStorage_1.openProjectFromDisk)(projectDir);
+        return { ok: true, ...opened };
+    });
+    electron_1.ipcMain.handle('project:saveConfig', async (_event, args) => {
+        const saved = await (0, projectStorage_1.saveProjectConfigOnDisk)(args.projectDir, args.config);
+        return { ok: true, ...saved };
     });
 }
 function setupUpdaterIpc() {

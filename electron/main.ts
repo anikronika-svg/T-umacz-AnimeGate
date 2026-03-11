@@ -12,6 +12,12 @@ import {
   subscribeUpdaterStatus,
   type UpdaterStatusPayload,
 } from './updater'
+import {
+  createProjectOnDisk,
+  openProjectFromDisk,
+  saveProjectConfigOnDisk,
+  type DiskProjectConfigV1,
+} from './projectStorage'
 
 const OPEN_STATE_FILE = 'open-state.json'
 
@@ -70,6 +76,13 @@ interface ApiRequestResult {
   body: string
   headers?: Record<string, string>
   error?: ApiRequestErrorPayload
+}
+
+interface CreateProjectArgs {
+  title: string
+  projectId: string
+  parentDir: string
+  initialConfig: Omit<DiskProjectConfigV1, 'projectDir' | 'configPath' | 'createdAt' | 'updatedAt'>
 }
 
 function getOpenStatePath(): string {
@@ -502,6 +515,33 @@ function setupFileIpc(): void {
     } finally {
       clearTimeout(timer)
     }
+  })
+
+  ipcMain.handle('project:pickDirectory', async (_event, args?: { title?: string; defaultPath?: string }) => {
+    const result = await dialog.showOpenDialog({
+      title: args?.title ?? 'Wybierz folder',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: args?.defaultPath,
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true }
+    }
+    return { canceled: false, directoryPath: result.filePaths[0] }
+  })
+
+  ipcMain.handle('project:create', async (_event, args: CreateProjectArgs) => {
+    const created = await createProjectOnDisk(args)
+    return { ok: true, ...created }
+  })
+
+  ipcMain.handle('project:open', async (_event, projectDir: string) => {
+    const opened = await openProjectFromDisk(projectDir)
+    return { ok: true, ...opened }
+  })
+
+  ipcMain.handle('project:saveConfig', async (_event, args: { projectDir: string; config: DiskProjectConfigV1 }) => {
+    const saved = await saveProjectConfigOnDisk(args.projectDir, args.config)
+    return { ok: true, ...saved }
   })
 }
 

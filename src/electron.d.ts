@@ -107,6 +107,266 @@ declare global {
         total?: number
         error?: string
       }) => void) => (() => void)
+      pickProjectDirectory: (args?: { title?: string; defaultPath?: string }) => Promise<{
+        canceled: boolean
+        directoryPath?: string
+      }>
+      createProject: (args: {
+        title: string
+        projectId: string
+        parentDir: string
+        initialConfig: {
+          schemaVersion: number
+          projectId: string
+          title: string
+          anilist: {
+            id: number | null
+            title: string
+          }
+          translationPreferences: {
+            sourceLang: string
+            targetLang: string
+            preferredModelId: string
+          }
+          characterWorkflow: {
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            lineCharacterAssignments: Array<{
+              lineId: number
+              rawCharacter: string
+              resolvedCharacterName: string
+            }>
+          }
+          translationStyleSettings: {
+            projectId: string
+            globalStyle: string
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            updatedAt: string
+          }
+        }
+      }) => Promise<{
+        ok: boolean
+        projectDir: string
+        configPath: string
+        config: {
+          schemaVersion: number
+          projectId: string
+          title: string
+          projectDir: string
+          configPath: string
+          createdAt: string
+          updatedAt: string
+          anilist: { id: number | null; title: string }
+          translationPreferences: { sourceLang: string; targetLang: string; preferredModelId: string }
+          characterWorkflow: {
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            lineCharacterAssignments: Array<{ lineId: number; rawCharacter: string; resolvedCharacterName: string }>
+          }
+          translationStyleSettings: {
+            projectId: string
+            globalStyle: string
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            updatedAt: string
+          }
+        }
+      }>
+      openProject: (projectDir: string) => Promise<{
+        ok: boolean
+        projectDir: string
+        configPath: string
+        config: {
+          schemaVersion: number
+          projectId: string
+          title: string
+          projectDir: string
+          configPath: string
+          createdAt: string
+          updatedAt: string
+          anilist: { id: number | null; title: string }
+          translationPreferences: { sourceLang: string; targetLang: string; preferredModelId: string }
+          characterWorkflow: {
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            lineCharacterAssignments: Array<{ lineId: number; rawCharacter: string; resolvedCharacterName: string }>
+          }
+          translationStyleSettings: {
+            projectId: string
+            globalStyle: string
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            updatedAt: string
+          }
+        }
+      }>
+      saveProjectConfig: (args: {
+        projectDir: string
+        config: {
+          schemaVersion: number
+          projectId: string
+          title: string
+          projectDir: string
+          configPath: string
+          createdAt: string
+          updatedAt: string
+          anilist: { id: number | null; title: string }
+          translationPreferences: { sourceLang: string; targetLang: string; preferredModelId: string }
+          characterWorkflow: {
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            lineCharacterAssignments: Array<{ lineId: number; rawCharacter: string; resolvedCharacterName: string }>
+          }
+          translationStyleSettings: {
+            projectId: string
+            globalStyle: string
+            characters: Array<{
+              id: number
+              name: string
+              anilistCharacterId?: number | null
+              anilistRole?: string
+              gender: string
+              avatarColor: string
+              style: string | null
+              profile: {
+                archetype: string
+                speakingTraits: string
+                characterNote: string
+                anilistDescription: string
+                mannerOfAddress: string
+                politenessLevel: string
+                vocabularyType: string
+                temperament: string
+              }
+            }>
+            updatedAt: string
+          }
+        }
+      }) => Promise<{
+        ok: boolean
+        projectDir: string
+        configPath: string
+      }>
     }
   }
 }

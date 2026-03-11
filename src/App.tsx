@@ -82,6 +82,71 @@ interface SeriesProjectMeta {
   lastUpdated: string
 }
 
+const PROJECT_SCHEMA_VERSION = 1
+const ACTIVE_DISK_PROJECT_STORAGE_KEY = 'animegate.active-disk-project.v1'
+
+interface DiskProjectCharacterProfile {
+  archetype: string
+  speakingTraits: string
+  characterNote: string
+  anilistDescription: string
+  mannerOfAddress: string
+  politenessLevel: string
+  vocabularyType: string
+  temperament: string
+}
+
+interface DiskProjectCharacter {
+  id: number
+  name: string
+  anilistCharacterId?: number | null
+  anilistRole?: string
+  gender: string
+  avatarColor: string
+  style: string | null
+  profile: DiskProjectCharacterProfile
+}
+
+interface DiskProjectConfigV1 {
+  schemaVersion: number
+  projectId: string
+  title: string
+  projectDir: string
+  configPath: string
+  createdAt: string
+  updatedAt: string
+  anilist: {
+    id: number | null
+    title: string
+  }
+  translationPreferences: {
+    sourceLang: string
+    targetLang: string
+    preferredModelId: string
+  }
+  characterWorkflow: {
+    characters: DiskProjectCharacter[]
+    lineCharacterAssignments: Array<{
+      lineId: number
+      rawCharacter: string
+      resolvedCharacterName: string
+    }>
+  }
+  translationStyleSettings: {
+    projectId: string
+    globalStyle: string
+    characters: DiskProjectCharacter[]
+    updatedAt: string
+  }
+}
+
+interface ActiveDiskProject {
+  projectId: string
+  title: string
+  projectDir: string
+  configPath: string
+}
+
 function sanitizeProjectId(value: string): string {
   return value
     .trim()
@@ -125,6 +190,26 @@ function loadSeriesProjectsCatalog(): SeriesProjectMeta[] {
 
 function saveSeriesProjectsCatalog(catalog: SeriesProjectMeta[]): void {
   localStorage.setItem(SERIES_PROJECTS_STORAGE_KEY, JSON.stringify(catalog))
+}
+
+function loadActiveDiskProject(): ActiveDiskProject | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_DISK_PROJECT_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as ActiveDiskProject
+    if (!parsed?.projectDir || !parsed?.projectId) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveActiveDiskProject(project: ActiveDiskProject | null): void {
+  if (!project) {
+    localStorage.removeItem(ACTIVE_DISK_PROJECT_STORAGE_KEY)
+    return
+  }
+  localStorage.setItem(ACTIVE_DISK_PROJECT_STORAGE_KEY, JSON.stringify(project))
 }
 
 interface DialogRow {
@@ -1143,6 +1228,8 @@ function ProjectBar({
   onSelectProjectId: (projectId: string) => void
   onCreateProject: () => void
   onLoadProject: () => void
+  onOpenProjectStep: () => void
+  activeDiskProjectTitle: string
 }): React.ReactElement {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, height: 28, background: '#1a1b23', borderBottom: `1px solid ${C.border}`, padding: '0 8px' }}>
@@ -1158,11 +1245,90 @@ function ProjectBar({
       </select>
       <button style={BASE_BTN} onClick={onCreateProject}>+ Nowy projekt</button>
       <button style={BASE_BTN} onClick={onLoadProject}>Wczytaj projekt</button>
+      <button style={{ ...BASE_BTN, borderColor: '#2b8bd8', color: C.accent }} onClick={onOpenProjectStep}>Krok 0: Projekt</button>
       <button style={{ ...BASE_BTN, opacity: 0.4, cursor: 'not-allowed' }} disabled title="Funkcja w przygotowaniu">Importuj .ass do TM</button>
       <button style={BASE_BTN} onClick={onLoadVideo}>Zaladuj wideo</button>
       <button style={{ ...BASE_BTN, opacity: 0.4, cursor: 'not-allowed' }} disabled title="Funkcja w przygotowaniu">Analizuj styl</button>
+      <span style={{ marginLeft: 10, fontSize: 11, color: C.accentY }}>Aktywny projekt dyskowy: {activeDiskProjectTitle}</span>
       <span style={{ marginLeft: 10, fontSize: 11, color: C.textDim }}>Plik: {loadedFileName}</span>
       <span style={{ marginLeft: 8, fontSize: 11, color: C.textDim }}>Wideo: {loadedVideoName}</span>
+    </div>
+  )
+}
+
+function ProjectStepZeroModal({
+  open,
+  newTitle,
+  newBaseDir,
+  openDir,
+  statusMessage,
+  onChangeNewTitle,
+  onPickNewBaseDir,
+  onCreate,
+  onPickOpenDir,
+  onOpenExisting,
+  onClose,
+}: {
+  open: boolean
+  newTitle: string
+  newBaseDir: string
+  openDir: string
+  statusMessage: string
+  onChangeNewTitle: (value: string) => void
+  onPickNewBaseDir: () => void
+  onCreate: () => void
+  onPickOpenDir: () => void
+  onOpenExisting: () => void
+  onClose: () => void
+}): React.ReactElement | null {
+  if (!open) return null
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,10,15,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+      <div style={{ width: 860, maxWidth: '96vw', background: '#171a26', border: `1px solid ${C.border}`, boxShadow: '0 14px 50px rgba(0,0,0,0.45)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ color: C.accent, fontWeight: 700 }}>Krok 0: Projekt</div>
+          <button style={BASE_BTN} onClick={onClose}>Zamknij</button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: 12 }}>
+          <div style={{ border: `1px solid ${C.border}`, padding: 10, background: '#1e2131' }}>
+            <div style={{ color: C.accentY, fontWeight: 700, marginBottom: 8 }}>Nowy projekt</div>
+            <div style={{ fontSize: 12, color: C.textDim, marginBottom: 6 }}>Tytul projektu:</div>
+            <input
+              value={newTitle}
+              onChange={e => onChangeNewTitle(e.currentTarget.value)}
+              placeholder="np. Nageki no Bourei"
+              style={{ width: '100%', height: 30, padding: '0 8px', background: '#22253a', border: `1px solid ${C.border}`, color: C.text }}
+            />
+            <div style={{ fontSize: 12, color: C.textDim, marginTop: 8, marginBottom: 6 }}>Folder bazowy:</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={BASE_BTN} onClick={onPickNewBaseDir}>Wybierz folder</button>
+              <div style={{ flex: 1, fontSize: 11, color: C.textDim, alignSelf: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {newBaseDir || 'Nie wybrano folderu'}
+              </div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <button style={{ ...BASE_BTN, background: '#1f6fb0', borderColor: '#2b8bd8', color: '#fff', fontWeight: 700 }} onClick={onCreate}>Utworz i przejdz do Kroku 1</button>
+            </div>
+          </div>
+
+          <div style={{ border: `1px solid ${C.border}`, padding: 10, background: '#1e2131' }}>
+            <div style={{ color: C.accentY, fontWeight: 700, marginBottom: 8 }}>Otwórz istniejący projekt</div>
+            <div style={{ fontSize: 12, color: C.textDim, marginBottom: 6 }}>Folder projektu:</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button style={BASE_BTN} onClick={onPickOpenDir}>Wybierz folder</button>
+              <div style={{ flex: 1, fontSize: 11, color: C.textDim, alignSelf: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {openDir || 'Nie wybrano folderu'}
+              </div>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <button style={{ ...BASE_BTN, background: '#1f6fb0', borderColor: '#2b8bd8', color: '#fff', fontWeight: 700 }} onClick={onOpenExisting}>Otworz projekt</button>
+            </div>
+          </div>
+        </div>
+        <div style={{ borderTop: `1px solid ${C.border}`, padding: '7px 12px', fontSize: 11, color: C.textDim, background: '#131623' }}>
+          {statusMessage || 'Krok 0 jest wymagany przed pełnym użyciem Kroków 1-3.'}
+        </div>
+      </div>
     </div>
   )
 }
@@ -3240,6 +3406,12 @@ export default function App(): React.ReactElement {
   const [targetLang, setTargetLang] = useState('pl')
   const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => loadProjectStyleSettings(currentProjectId, BASE_PROJECT_CHARACTERS))
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
+  const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(() => loadActiveDiskProject())
+  const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(() => !loadActiveDiskProject())
+  const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
+  const [newProjectTitle, setNewProjectTitle] = useState('')
+  const [newProjectBaseDir, setNewProjectBaseDir] = useState('')
+  const [openProjectDir, setOpenProjectDir] = useState('')
   const {
     status: updaterStatus,
     isSupported: isUpdaterSupported,
@@ -3255,6 +3427,10 @@ export default function App(): React.ReactElement {
   const lastLineSyncFromVideoRef = useRef<number | null>(null)
   const pauseAtAfterLineRef = useRef<number | null>(null)
   const hydratedProjectIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    saveActiveDiskProject(activeDiskProject)
+  }, [activeDiskProject])
 
   useEffect(() => {
     rowsDataRef.current = rowsData
@@ -3379,6 +3555,25 @@ export default function App(): React.ReactElement {
     }
   }, [])
 
+  useEffect(() => {
+    const remembered = loadActiveDiskProject()
+    if (!remembered || !window.electronAPI?.openProject) return
+    let cancelled = false
+    void window.electronAPI.openProject(remembered.projectDir).then(result => {
+      if (cancelled) return
+      hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
+    }).catch(error => {
+      if (cancelled) return
+      const message = error instanceof Error ? error.message : 'Nieznany blad'
+      setProjectStepStatus(`Nie mozna automatycznie otworzyc ostatniego projektu: ${message}`)
+      setProjectStepOpen(true)
+      setActiveDiskProject(null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const selectedRow = rowsData.find(row => row.id === selectedId)
   useEffect(() => {
     upsertSeriesProjectMeta(currentProjectId, {
@@ -3387,6 +3582,38 @@ export default function App(): React.ReactElement {
       targetLang,
     })
   }, [currentProjectId, selectedModelId, sourceLang, targetLang])
+
+  useEffect(() => {
+    if (!activeDiskProject || !window.electronAPI?.saveProjectConfig) return
+    const timer = window.setTimeout(() => {
+      const snapshot = buildDiskProjectConfig(
+        activeDiskProject.projectDir,
+        activeDiskProject.configPath,
+        activeDiskProject.projectId,
+        activeDiskProject.title,
+      )
+      void window.electronAPI.saveProjectConfig({
+        projectDir: activeDiskProject.projectDir,
+        config: snapshot,
+      }).catch(error => {
+        const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac konfiguracji projektu.'
+        setProjectStepStatus(`BLAD autozapisu projektu: ${message}`)
+      })
+    }, 900)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [
+    activeDiskProject,
+    sourceLang,
+    targetLang,
+    selectedModelId,
+    styleSettings,
+    currentProjectId,
+    seriesProjects,
+    rowsData,
+  ])
 
   const videoSrc = videoPath ? toFileVideoUrl(videoPath) : null
   const loadedVideoName = videoPath ? fileNameFromPath(videoPath) : 'Brak wideo'
@@ -3648,6 +3875,196 @@ export default function App(): React.ReactElement {
     if (!selected) return
     setCurrentProjectId(selected.id)
     appendTranslationLog(`Wczytano projekt: ${selected.title} (${selected.id}).`)
+  }
+
+  const buildDiskProjectConfig = (
+    projectDir: string,
+    configPath: string,
+    projectIdOverride?: string,
+    titleOverride?: string,
+  ): DiskProjectConfigV1 => {
+    const projectId = projectIdOverride ?? currentProjectId
+    const meta = seriesProjects.find(project => project.id === projectId)
+    const title = titleOverride ?? meta?.title ?? projectId
+    const now = new Date().toISOString()
+    const lineCharacterAssignments = rowsData
+      .map(row => ({
+        lineId: row.id,
+        rawCharacter: row.character,
+        resolvedCharacterName: resolveCharacterForLineName(row.character, styleSettings.characters)?.name ?? row.character,
+      }))
+      .filter(item => item.rawCharacter.trim().length > 0)
+
+    return {
+      schemaVersion: PROJECT_SCHEMA_VERSION,
+      projectId,
+      title,
+      projectDir,
+      configPath,
+      createdAt: now,
+      updatedAt: now,
+      anilist: {
+        id: meta?.anilistId ?? null,
+        title,
+      },
+      translationPreferences: {
+        sourceLang,
+        targetLang,
+        preferredModelId: selectedModelId,
+      },
+      characterWorkflow: {
+        characters: styleSettings.characters.map(character => ({
+          ...character,
+          gender: character.gender,
+        })),
+        lineCharacterAssignments,
+      },
+      translationStyleSettings: {
+        ...styleSettings,
+        projectId,
+        updatedAt: now,
+      },
+    }
+  }
+
+  const hydrateFromDiskProject = (config: DiskProjectConfigV1, projectDir: string, configPath: string): void => {
+    const projectId = sanitizeProjectId(config.projectId) || config.projectId
+    const projectTitle = config.title?.trim() || projectId
+    const preferredModelId = config.translationPreferences?.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID
+    const source = config.translationPreferences?.sourceLang || 'en'
+    const target = config.translationPreferences?.targetLang || 'pl'
+    const anilistId = Number.isFinite(config.anilist?.id) ? config.anilist.id : null
+
+    const nextMeta: SeriesProjectMeta = {
+      id: projectId,
+      title: projectTitle,
+      anilistId,
+      preferredModelId,
+      sourceLang: source,
+      targetLang: target,
+      lastUpdated: new Date().toISOString(),
+    }
+    setSeriesProjects(prev => {
+      const existing = prev.find(item => item.id === projectId)
+      if (!existing) return [...prev, nextMeta]
+      return prev.map(item => item.id === projectId ? { ...item, ...nextMeta } : item)
+    })
+
+    const restoredSettings: ProjectTranslationStyleSettings = {
+      projectId,
+      globalStyle: (config.translationStyleSettings?.globalStyle as TranslationStyleId) || 'neutral',
+      characters: Array.isArray(config.translationStyleSettings?.characters)
+        ? config.translationStyleSettings.characters.map((item, idx) => ({
+          id: Number.isFinite(item.id) ? item.id : idx + 1,
+          name: item.name || `Character_${idx + 1}`,
+          anilistCharacterId: item.anilistCharacterId ?? null,
+          anilistRole: item.anilistRole,
+          gender: (item.gender as CharacterGender) || 'Unknown',
+          avatarColor: item.avatarColor || '#4f8ad6',
+          style: (item.style as TranslationStyleId | null) ?? null,
+          profile: {
+            archetype: (item.profile?.archetype as CharacterArchetypeId) || 'default',
+            speakingTraits: item.profile?.speakingTraits || '',
+            characterNote: item.profile?.characterNote || '',
+            anilistDescription: item.profile?.anilistDescription || '',
+            mannerOfAddress: item.profile?.mannerOfAddress || '',
+            politenessLevel: item.profile?.politenessLevel || '',
+            vocabularyType: item.profile?.vocabularyType || '',
+            temperament: item.profile?.temperament || '',
+          },
+        }))
+        : createProjectStyleSettings(projectId, BASE_PROJECT_CHARACTERS).characters,
+      updatedAt: config.translationStyleSettings?.updatedAt || new Date().toISOString(),
+    }
+
+    setSourceLang(source)
+    setTargetLang(target)
+    setSelectedModelId(preferredModelId)
+    setStyleSettings(restoredSettings)
+    saveProjectStyleSettings(restoredSettings)
+    setCurrentProjectId(projectId)
+    setProjectPickerId(projectId)
+    setActiveDiskProject({
+      projectId,
+      title: projectTitle,
+      projectDir,
+      configPath,
+    })
+    setProjectStepOpen(false)
+    setProjectStepStatus(`Wczytano projekt: ${projectTitle}`)
+    appendTranslationLog(`Krok 0: wczytano projekt dyskowy ${projectTitle} (${projectDir}).`)
+  }
+
+  const handlePickNewProjectBaseDir = async (): Promise<void> => {
+    if (!window.electronAPI?.pickProjectDirectory) return
+    const result = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder bazowy dla nowego projektu' })
+    if (result.canceled || !result.directoryPath) return
+    setNewProjectBaseDir(result.directoryPath)
+  }
+
+  const handlePickOpenProjectDir = async (): Promise<void> => {
+    if (!window.electronAPI?.pickProjectDirectory) return
+    const result = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder istniejącego projektu' })
+    if (result.canceled || !result.directoryPath) return
+    setOpenProjectDir(result.directoryPath)
+  }
+
+  const handleCreateDiskProject = async (): Promise<void> => {
+    if (!window.electronAPI?.createProject) return
+    const title = newProjectTitle.trim()
+    if (!title) {
+      setProjectStepStatus('Podaj tytul projektu.')
+      return
+    }
+    if (!newProjectBaseDir.trim()) {
+      setProjectStepStatus('Wybierz folder bazowy projektu.')
+      return
+    }
+    const projectId = sanitizeProjectId(title) || `project_${Date.now()}`
+    try {
+      const initial = buildDiskProjectConfig('', '', projectId, title)
+      const result = await window.electronAPI.createProject({
+        title,
+        projectId,
+        parentDir: newProjectBaseDir,
+        initialConfig: {
+          ...initial,
+          schemaVersion: PROJECT_SCHEMA_VERSION,
+          projectId,
+          title,
+        },
+      })
+      hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
+      setNewProjectTitle('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nie udalo sie utworzyc projektu.'
+      setProjectStepStatus(`BLAD tworzenia projektu: ${message}`)
+    }
+  }
+
+  const handleOpenDiskProject = async (): Promise<void> => {
+    if (!window.electronAPI?.openProject) return
+    const projectDir = openProjectDir.trim()
+    if (!projectDir) {
+      setProjectStepStatus('Wybierz folder istniejącego projektu.')
+      return
+    }
+    try {
+      const result = await window.electronAPI.openProject(projectDir)
+      hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nie udalo sie otworzyc projektu.'
+      setProjectStepStatus(`BLAD otwierania projektu: ${message}`)
+    }
+  }
+
+  const handleOpenCharactersModal = (): void => {
+    if (!activeDiskProject) {
+      setProjectStepStatus('Najpierw wykonaj Krok 0: utworz lub otworz projekt.')
+      setProjectStepOpen(true)
+      return
+    }
+    setCharactersOpen(true)
   }
 
   const appendTranslationLog = (message: string): void => {
@@ -5221,7 +5638,7 @@ export default function App(): React.ReactElement {
         onOpenFile={() => { void handleOpenFile() }}
         onSaveFile={() => { void handleSaveFile() }}
         onOpenApi={() => setApiOpen(true)}
-        onOpenCharacters={() => setCharactersOpen(true)}
+        onOpenCharacters={handleOpenCharactersModal}
         onOpenMemory={() => setMemoryOpen(true)}
         onOpenGenderCorrection={() => setGenderCorrectionOpen(true)}
         onTranslateAll={handleTranslateAll}
@@ -5246,6 +5663,8 @@ export default function App(): React.ReactElement {
         onSelectProjectId={setProjectPickerId}
         onCreateProject={handleCreateSeriesProject}
         onLoadProject={handleLoadSeriesProject}
+        onOpenProjectStep={() => setProjectStepOpen(true)}
+        activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
       />
       <LinesView
         rows={rowsData}
@@ -5359,6 +5778,19 @@ export default function App(): React.ReactElement {
         characters={styleSettings.characters}
         onClose={() => setGenderCorrectionOpen(false)}
         onApply={handleApplyGenderCorrections}
+      />
+      <ProjectStepZeroModal
+        open={isProjectStepOpen}
+        newTitle={newProjectTitle}
+        newBaseDir={newProjectBaseDir}
+        openDir={openProjectDir}
+        statusMessage={projectStepStatus}
+        onChangeNewTitle={setNewProjectTitle}
+        onPickNewBaseDir={() => { void handlePickNewProjectBaseDir() }}
+        onCreate={() => { void handleCreateDiskProject() }}
+        onPickOpenDir={() => { void handlePickOpenProjectDir() }}
+        onOpenExisting={() => { void handleOpenDiskProject() }}
+        onClose={() => setProjectStepOpen(false)}
       />
     </div>
   )

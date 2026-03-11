@@ -5,6 +5,7 @@
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
 - Aktualna wersja aplikacji (`package.json`): `1.0.2`.
 - Ostatnie commity:
+  - `13a9405` – auto-update IPC + preload + minimalny UI statusu
   - `48ca83b` – workflow release + bump do `1.0.1`
   - `35138bf` – foundation auto-update (electron-updater + publish config + release:win)
   - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
@@ -16,6 +17,7 @@
 - Kluczowe pliki:
   - `src/App.tsx` – glowny renderer i logika aplikacji.
   - `src/hooks/useUpdaterStatus.ts` – hook renderera do subskrypcji statusu updatera i akcji check/download/install.
+  - `electron/projectStorage.ts` – trwały storage projektu na dysku (`animegate-project.json`, schema v1).
   - `src/subtitleParser.ts` – parser i zapis ASS/SSA (`tlmode`).
   - `src/anilist.ts` – integracja AniList i merge castu serii.
   - `src/translationStyle.ts` – style, archetypy, profile postaci, kontekst tlumaczenia.
@@ -197,3 +199,33 @@
 - `src/electron.d.ts` – typy updater API dla renderer.
 - `src/hooks/useUpdaterStatus.ts` – nowy hook.
 - `src/App.tsx` – lekki pasek statusu aktualizacji + akcje check/download/install.
+
+## 12) Krok 0: Projekt (foundation v1)
+- Dodano fundament projektow dyskowych (JSON) przed krokami 1/2/3:
+  - nowy plik konfiguracyjny projektu: `animegate-project.json`,
+  - wersjonowany schemat: `schemaVersion=1`.
+- Dodane IPC dla projektu:
+  - `project:pickDirectory`
+  - `project:create`
+  - `project:open`
+  - `project:saveConfig`
+- Dodane API preload dla renderera:
+  - `pickProjectDirectory()`
+  - `createProject()`
+  - `openProject()`
+  - `saveProjectConfig()`
+- Dodany minimalny UI Kroku 0:
+  - modal `Krok 0: Projekt` (Nowy projekt / Otworz istniejący),
+  - wskazanie aktywnego projektu dyskowego w pasku projektu.
+- Dodane zachowanie v1:
+  - zapis i odczyt konfiguracji projektu z dysku,
+  - automatyczne przywrócenie ostatniego aktywnego projektu przy starcie,
+  - autozapis konfiguracji projektu (debounced) po zmianach,
+  - wejście do modalu Postacie (Kroki 1-3) wymaga aktywnego projektu dyskowego.
+- Zakres celowo ograniczony (bez rewolucji):
+  - istniejący flow kroków 1/2/3 nadal działa,
+  - integracja pełnej mapy wszystkich danych odcinka i pipeline do projektu będzie domykana etapowo.
+
+## 13) Następny krok (Krok 0 integracja v2)
+- Ujednolicić i zapisywać pełny stan kroków 1/2/3 do projektu (w tym pełniejsze mapowanie przypisań linii i metadanych castu).
+- Dodać walidację kompatybilności i migracje schematu (`v1 -> v2`) bez łamania istniejących projektów.

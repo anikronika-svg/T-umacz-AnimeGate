@@ -73,6 +73,61 @@ interface ApiRequestResult {
   }
 }
 
+interface DiskProjectCharacterProfile {
+  archetype: string
+  speakingTraits: string
+  characterNote: string
+  anilistDescription: string
+  mannerOfAddress: string
+  politenessLevel: string
+  vocabularyType: string
+  temperament: string
+}
+
+interface DiskProjectCharacter {
+  id: number
+  name: string
+  anilistCharacterId?: number | null
+  anilistRole?: string
+  gender: string
+  avatarColor: string
+  style: string | null
+  profile: DiskProjectCharacterProfile
+}
+
+interface DiskProjectConfigV1 {
+  schemaVersion: number
+  projectId: string
+  title: string
+  projectDir: string
+  configPath: string
+  createdAt: string
+  updatedAt: string
+  anilist: {
+    id: number | null
+    title: string
+  }
+  translationPreferences: {
+    sourceLang: string
+    targetLang: string
+    preferredModelId: string
+  }
+  characterWorkflow: {
+    characters: DiskProjectCharacter[]
+    lineCharacterAssignments: Array<{
+      lineId: number
+      rawCharacter: string
+      resolvedCharacterName: string
+    }>
+  }
+  translationStyleSettings: {
+    projectId: string
+    globalStyle: string
+    characters: DiskProjectCharacter[]
+    updatedAt: string
+  }
+}
+
 interface UpdaterStatusPayload {
   phase: 'idle' | 'checking-for-update' | 'update-available' | 'update-not-available' | 'download-started' | 'download-progress' | 'update-downloaded' | 'installing' | 'error'
   message: string
@@ -119,4 +174,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('updater:status', listener)
     }
   },
+  pickProjectDirectory: (args?: { title?: string; defaultPath?: string }): Promise<{ canceled: boolean; directoryPath?: string }> =>
+    ipcRenderer.invoke('project:pickDirectory', args),
+  createProject: (args: {
+    title: string
+    projectId: string
+    parentDir: string
+    initialConfig: Omit<DiskProjectConfigV1, 'projectDir' | 'configPath' | 'createdAt' | 'updatedAt'>
+  }): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
+    ipcRenderer.invoke('project:create', args),
+  openProject: (projectDir: string): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
+    ipcRenderer.invoke('project:open', projectDir),
+  saveProjectConfig: (args: { projectDir: string; config: DiskProjectConfigV1 }): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
+    ipcRenderer.invoke('project:saveConfig', args),
 })
