@@ -32,6 +32,7 @@ import {
   buildProjectLineAssignments,
   type ProjectLineAssignment,
 } from './project/assignmentMatching'
+import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 
 const C = {
   bg0: '#1e1e2e',
@@ -2631,36 +2632,41 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     cast: AniListCharacter,
   ): CharacterStyleAssignment['profile'] => {
     const base = existingProfile ?? createDefaultProfile()
+    const analyzed = analyzeCharacterProfileFromAniList(cast)
     const nextTraits = base.speakingTraits.trim()
       ? base.speakingTraits
-      : cast.personalityTraits.join(', ')
+      : analyzed.speakingTraits ?? ''
     const nextNote = base.characterNote.trim()
       ? base.characterNote
-      : cast.descriptionShort
+      : analyzed.characterNote ?? ''
+    const nextSummary = base.personalitySummary.trim()
+      ? base.personalitySummary
+      : analyzed.personalitySummary ?? ''
     const nextAniListDescription = base.anilistDescription.trim()
       ? base.anilistDescription
-      : cast.description
+      : analyzed.anilistDescription ?? ''
     const nextArchetype = base.archetype !== 'default'
       ? base.archetype
       : cast.inferredArchetype
     const nextMannerOfAddress = base.mannerOfAddress.trim()
       ? base.mannerOfAddress
-      : cast.inferredMannerOfAddress
+      : analyzed.mannerOfAddress ?? ''
     const nextPolitenessLevel = base.politenessLevel.trim()
       ? base.politenessLevel
-      : cast.inferredPolitenessLevel
+      : analyzed.politenessLevel ?? ''
     const nextVocabularyType = base.vocabularyType.trim()
       ? base.vocabularyType
-      : cast.inferredVocabularyType
+      : analyzed.vocabularyType ?? ''
     const nextTemperament = base.temperament.trim()
       ? base.temperament
-      : cast.inferredTemperament
+      : analyzed.temperament ?? ''
 
     return {
       ...base,
       archetype: nextArchetype,
       speakingTraits: nextTraits,
       characterNote: nextNote,
+      personalitySummary: nextSummary,
       anilistDescription: nextAniListDescription,
       mannerOfAddress: nextMannerOfAddress,
       politenessLevel: nextPolitenessLevel,
@@ -3196,6 +3202,63 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                       }))}
                       placeholder="Opis charakteru"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
+                    />
+                    <input
+                      value={character.profile.personalitySummary}
+                      onChange={e => setDraft(prev => ({
+                        ...prev,
+                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, personalitySummary: e.currentTarget.value } } : item),
+                      }))}
+                      placeholder="Podsumowanie osobowosci"
+                      style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
+                    />
+                    <input
+                      value={character.profile.mannerOfAddress}
+                      onChange={e => setDraft(prev => ({
+                        ...prev,
+                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, mannerOfAddress: e.currentTarget.value } } : item),
+                      }))}
+                      placeholder="Sposob zwracania sie"
+                      style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
+                    />
+                    <div style={{ marginTop: 4, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                      <input
+                        value={character.profile.politenessLevel}
+                        onChange={e => setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, politenessLevel: e.currentTarget.value } } : item),
+                        }))}
+                        placeholder="Formalnosc"
+                        style={{ width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
+                      />
+                      <input
+                        value={character.profile.temperament}
+                        onChange={e => setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, temperament: e.currentTarget.value } } : item),
+                        }))}
+                        placeholder="Temperament"
+                        style={{ width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
+                      />
+                    </div>
+                    <input
+                      value={character.profile.vocabularyType}
+                      onChange={e => setDraft(prev => ({
+                        ...prev,
+                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, vocabularyType: e.currentTarget.value } } : item),
+                      }))}
+                      placeholder="Typ slownictwa"
+                      style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
+                    />
+                    <textarea
+                      value={character.profile.anilistDescription}
+                      onChange={e => setDraft(prev => ({
+                        ...prev,
+                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, anilistDescription: e.currentTarget.value } } : item),
+                      }))}
+                      placeholder="Opis AniList"
+                      rows={2}
+                      style={{ marginTop: 4, width: '100%', background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '4px 6px', resize: 'vertical' }}
                     />
                   </div>
                 ))}

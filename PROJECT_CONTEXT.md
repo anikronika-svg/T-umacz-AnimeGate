@@ -380,3 +380,30 @@
     - pole wyszukiwania puste,
     - lewa lista pusta,
     - prawa lista pusta.
+
+## 22) Domkniecie przeplywu AniList -> analiza profilu -> Krok 3 (v1.0.10)
+- Zerwanie przeplywu (root cause):
+  - analiza profilu byla tylko czesciowa i rozproszona; brak dedykowanego, stabilnego modułu auto-analizy profilu mowy postaci.
+  - Krok 3 mial ograniczone bindowanie UI (widoczne glownie `speakingTraits` i `characterNote`), wiec nawet zapisane pola profilu nie byly realnie eksponowane.
+- Naprawa end-to-end:
+  - dodano moduł `src/project/characterProfileAnalysis.ts`:
+    - `analyzeCharacterProfileFromAniList(cast)` buduje profil na podstawie:
+      - `description`, `descriptionShort`, `personalityTraits`, inferred hints,
+      - konserwatywnych fallbackow lingwistycznych (bez agresywnego zgadywania).
+  - `CharacterModal` (Krok 1/2/3):
+    - `buildPrefilledProfile` korzysta z analizy i wypelnia puste pola profilu,
+    - priorytet danych zachowany:
+      1) dane reczne uzytkownika (`base`),
+      2) dane juz zapisane/projektowe,
+      3) auto-analiza AniList tylko dla pustych pol.
+  - Krok 3:
+    - rozszerzono binding UI o pola profilu:
+      - `personalitySummary`
+      - `mannerOfAddress`
+      - `politenessLevel`
+      - `vocabularyType`
+      - `temperament`
+      - `anilistDescription`
+- Efekt:
+  - po zaladowaniu castu i dodaniu postaci do bazy roboczej, Krok 3 pokazuje realnie wypelnione profile tam, gdzie AniList daje dane.
+  - profile zapisuja sie do projektu i wracaja po ponownym otwarciu (zgodnie z mapperami Etapu 2).
