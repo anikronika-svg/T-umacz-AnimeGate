@@ -8,6 +8,7 @@ const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 const crypto_1 = require("crypto");
 const child_process_1 = require("child_process");
+const updater_1 = require("./updater");
 const OPEN_STATE_FILE = 'open-state.json';
 function getOpenStatePath() {
     return path_1.default.join(electron_1.app.getPath('userData'), OPEN_STATE_FILE);
@@ -390,6 +391,7 @@ function setupFileIpc() {
 electron_1.app.whenReady().then(() => {
     setupFileIpc();
     createWindow();
+    void (0, updater_1.initializeAutoUpdate)();
     electron_1.app.on('activate', () => {
         if (electron_1.BrowserWindow.getAllWindows().length === 0) {
             createWindow();

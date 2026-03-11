@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { createHash } from 'crypto'
 import { spawn } from 'child_process'
+import { initializeAutoUpdate } from './updater'
 
 const OPEN_STATE_FILE = 'open-state.json'
 
@@ -499,6 +500,7 @@ function setupFileIpc(): void {
 app.whenReady().then(() => {
   setupFileIpc()
   createWindow()
+  void initializeAutoUpdate()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

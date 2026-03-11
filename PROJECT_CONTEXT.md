@@ -4,6 +4,7 @@
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
 - Ostatnie commity:
+  - `35138bf` – foundation auto-update (electron-updater + publish config + release:win)
   - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
   - `01ba205` – konfiguracja instalatora NSIS + `build:win`
   - `b129606` – stabilizacja wyboru silnika (stop flicker / auto-switch loop)
@@ -16,6 +17,7 @@
   - `src/anilist.ts` – integracja AniList i merge castu serii.
   - `src/translationStyle.ts` – style, archetypy, profile postaci, kontekst tlumaczenia.
   - `electron/main.ts` – okno Electron, IPC, ffmpeg/waveform.
+  - `electron/updater.ts` – runtime updater (main process), check for updates po starcie + event logging.
   - `electron/preload.ts` – `window.electronAPI`.
 
 ## 3) Moduly funkcjonalne
@@ -137,12 +139,23 @@
   - dodano dependency `electron-updater`,
   - dodano `build.publish` dla GitHub Releases,
   - dodano skrypt `release:win`.
+- Etap runtime (main process, bez UI/IPC) został wdrozony:
+  - dodano moduł `electron/updater.ts`,
+  - `main.ts` inicjalizuje updater po `app.whenReady()` przez `initializeAutoUpdate()`,
+  - updater obsługuje eventy:
+    - `checking-for-update`
+    - `update-available`
+    - `update-not-available`
+    - `error`
+    - `download-progress`
+    - `update-downloaded`
+  - check for updates uruchamiany automatycznie po starcie aplikacji (tylko gdy `app.isPackaged=true`),
+  - jawny, bezpieczny guard dla dev mode (`disabled-dev` log, brak check).
 - Nadal NIE jest wdrozone:
-  - runtime updater w `electron/main.ts`,
   - IPC/preload kanały updatera,
   - UI statusu aktualizacji,
   - workflow `.github/workflows/release.yml`.
 - Uwaga dot. repo prywatnego:
   - visibility repo nie zostala potwierdzona narzedziowo w tym srodowisku (brak `gh`, brak dostepu do GitHub API),
   - jezeli repo jest prywatne, klient auto-update bedzie wymagal dostepu do release assets (token/pośrednia dystrybucja), co wpływa na bezpieczenstwo i UX.
-- Następny krok: implementacja runtime updatera (main process) z zachowaniem obecnego procesu build.
+- Następny krok: dodać IPC/preload API dla updatera (status + komendy), nadal bez zmian UI.
