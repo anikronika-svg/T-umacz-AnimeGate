@@ -407,3 +407,26 @@
 - Efekt:
   - po zaladowaniu castu i dodaniu postaci do bazy roboczej, Krok 3 pokazuje realnie wypelnione profile tam, gdzie AniList daje dane.
   - profile zapisuja sie do projektu i wracaja po ponownym otwarciu (zgodnie z mapperami Etapu 2).
+
+## 23) UI layout refactor: 3-zone workspace (v1.0.11)
+- Zakres:
+  - refaktor ukladu UI bez zmiany logiki biznesowej.
+  - brak zmian w parserze ASS, pipeline tlumaczenia, projekcie, postaciach, pamieci, waveform, updaterze i IPC.
+- Nowy uklad:
+  - Top Bar:
+    - Open, Save, tlmode, silnik, source/target, Translate all, Translate selected, Stop.
+  - Left Sidebar:
+    - narzedzia: API, Postacie, Pamiec, Koryguj plec, Zaladuj,
+    - kontrolki projektu: selector projektu, TM info, Krok 0, Wczytaj,
+    - pusta rezerwa na przyszle panele (AI context/assistant tools).
+  - Main Work Area:
+    - status aktualizacji,
+    - tabela napisow,
+    - edytor linii,
+    - panel pamieci tlumaczeniowej,
+    - waveform timeline.
+- Video panel:
+  - usunieto duzy `VideoPanel` z widoku (layout), pozostawiajac logike i handlery nietkniete.
+- Efekt:
+  - bardziej zwarty i przewidywalny workflow,
+  - mniej marnowanego miejsca i wyrazny podzial narzedzi vs obszar roboczy.

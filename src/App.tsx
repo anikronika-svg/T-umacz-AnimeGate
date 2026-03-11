@@ -1084,10 +1084,6 @@ interface ActionBarProps {
 function ActionBar({
   onOpenFile,
   onSaveFile,
-  onOpenApi,
-  onOpenCharacters,
-  onOpenMemory,
-  onOpenGenderCorrection,
   onTranslateAll,
   onTranslateSelected,
   onStopTranslate,
@@ -1157,11 +1153,71 @@ function ActionBar({
       >
         Stop
       </button>
-      <Sep />
-      <button style={BASE_BTN} onClick={onOpenApi}>API</button>
-      <button style={BASE_BTN} onClick={onOpenCharacters}>Postacie</button>
-      <button style={BASE_BTN} onClick={onOpenMemory}>Pamiec</button>
-      <button style={BASE_BTN} onClick={onOpenGenderCorrection}>Koryguj plec</button>
+    </div>
+  )
+}
+
+function LeftSidebar({
+  onOpenApi,
+  onOpenCharacters,
+  onOpenMemory,
+  onOpenGenderCorrection,
+  onLoadVideo,
+  projectOptions,
+  currentProjectId,
+  onSelectProjectId,
+  onOpenProjectStep,
+  onLoadProject,
+  activeDiskProjectTitle,
+  loadedFileName,
+}: {
+  onOpenApi: () => void
+  onOpenCharacters: () => void
+  onOpenMemory: () => void
+  onOpenGenderCorrection: () => void
+  onLoadVideo: () => void
+  projectOptions: SeriesProjectMeta[]
+  currentProjectId: string
+  onSelectProjectId: (projectId: string) => void
+  onOpenProjectStep: () => void
+  onLoadProject: () => void
+  activeDiskProjectTitle: string
+  loadedFileName: string
+}): React.ReactElement {
+  return (
+    <div style={{ width: 290, minWidth: 290, borderRight: `1px solid ${C.border}`, background: '#1a1b23', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <button style={BASE_BTN} onClick={onOpenApi}>API</button>
+        <button style={BASE_BTN} onClick={onOpenCharacters}>Postacie</button>
+        <button style={BASE_BTN} onClick={onOpenMemory}>Pamiec</button>
+        <button style={BASE_BTN} onClick={onOpenGenderCorrection}>Koryguj plec</button>
+        <button style={{ ...BASE_BTN, gridColumn: '1 / -1', background: '#2d4b7d', borderColor: '#3f7ed2' }} onClick={onLoadVideo}>Zaladuj</button>
+      </div>
+
+      <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'grid', gap: 6 }}>
+        <div style={{ fontSize: 11, color: C.textDim }}>Projekt</div>
+        <select
+          style={{ ...BASE_SEL, width: '100%' }}
+          value={currentProjectId}
+          onChange={e => onSelectProjectId(e.currentTarget.value)}
+        >
+          {projectOptions.map(project => (
+            <option key={project.id} value={project.id}>{project.title}</option>
+          ))}
+        </select>
+        <div style={{ fontSize: 11, color: C.textDim, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          TM: <span style={{ color: C.accentY }}>{activeDiskProjectTitle}</span>
+        </div>
+        <div style={{ fontSize: 11, color: C.textDim, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          Plik: {loadedFileName}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <button style={{ ...BASE_BTN, borderColor: '#2b8bd8', color: C.accent }} onClick={onOpenProjectStep}>Krok 0</button>
+          <button style={BASE_BTN} onClick={onLoadProject}>Wczytaj</button>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, minHeight: 0, borderTop: `1px solid ${C.borderB}`, background: '#171922' }} />
     </div>
   )
 }
@@ -5632,97 +5688,70 @@ export default function App(): React.ReactElement {
         onChangeModelId={handleModelChange}
         modelOptions={TRANSLATION_MODEL_OPTIONS}
       />
-      <ProjectBar
-        loadedFileName={loadedFileName}
-        loadedVideoName={loadedVideoName}
-        onLoadVideo={() => { void handleOpenVideoFile() }}
-        projectOptions={seriesProjects}
-        currentProjectId={projectPickerId}
-        onSelectProjectId={setProjectPickerId}
-        onCreateProject={handleCreateSeriesProject}
-        onLoadProject={handleLoadSeriesProject}
-        onOpenProjectStep={() => setProjectStepOpen(true)}
-        activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
-      />
-      <LinesView
-        rows={rowsData}
-        selectedId={selectedId}
-        selectedIds={selectedLineIds}
-        translatingLineId={translatingLineId}
-        onSelect={handleSelectLine}
-        onActivateLine={handleActivateLine}
-        getGenderForCharacter={(characterName) => resolveGenderForCharacterName(characterName.trim(), styleSettings.characters)}
-      />
-      <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#1b1c24' }}>
-        Aktywny styl: <strong style={{ color: C.accentY }}>{effectiveStyleLabel}</strong>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+        <LeftSidebar
+          onOpenApi={() => setApiOpen(true)}
+          onOpenCharacters={handleOpenCharactersModal}
+          onOpenMemory={() => setMemoryOpen(true)}
+          onOpenGenderCorrection={() => setGenderCorrectionOpen(true)}
+          onLoadVideo={() => { void handleOpenVideoFile() }}
+          projectOptions={seriesProjects}
+          currentProjectId={projectPickerId}
+          onSelectProjectId={setProjectPickerId}
+          onOpenProjectStep={() => setProjectStepOpen(true)}
+          onLoadProject={handleLoadSeriesProject}
+          activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
+          loadedFileName={loadedFileName}
+        />
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
+          <UpdateStatusBar
+            status={updaterStatus}
+            isSupported={isUpdaterSupported}
+            onCheck={() => { void checkForUpdates() }}
+            onDownload={() => { void downloadUpdate() }}
+            onInstall={() => { void installUpdate() }}
+          />
+          <LinesView
+            rows={rowsData}
+            selectedId={selectedId}
+            selectedIds={selectedLineIds}
+            translatingLineId={translatingLineId}
+            onSelect={handleSelectLine}
+            onActivateLine={handleActivateLine}
+            getGenderForCharacter={(characterName) => resolveGenderForCharacterName(characterName.trim(), styleSettings.characters)}
+          />
+          <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#1b1c24' }}>
+            Aktywny styl: <strong style={{ color: C.accentY }}>{effectiveStyleLabel}</strong>
+          </div>
+          <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#171920', maxHeight: 62, overflow: 'auto' }}>
+            Log tlumaczenia: {translationLogs[0] ?? 'brak'}
+          </div>
+          <EditorPanel row={selectedRow} onChangeTarget={handleChangeLineTarget} />
+          <SuggestionsPanel
+            row={selectedRow}
+            suggestions={suggestions}
+            selectedSuggestionIndex={selectedSuggestionIndex}
+            onSelectSuggestionIndex={setSelectedSuggestionIndex}
+            onApplySelectedSuggestion={applySelectedSuggestion}
+            onSkip={handleSkipSuggestion}
+            projectNameById={projectNameById}
+          />
+          <WaveformPanel
+            waveform={waveformData}
+            loading={waveformLoading}
+            error={waveformError}
+            currentTime={videoCurrentTime}
+            selected={waveformSelection}
+            onSeek={handleWaveformSeek}
+            onChangeLineTiming={updateLineTiming}
+            onAutoSnapStart={handleAutoSnapStart}
+            onAutoSnapEnd={handleAutoSnapEnd}
+            onAutoSnapLine={handleAutoSnapLine}
+            onAutoSnapSelected={handleAutoSnapSelected}
+            onAutoSnapAll={handleAutoSnapAll}
+          />
+        </div>
       </div>
-      <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#171920', maxHeight: 62, overflow: 'auto' }}>
-        Log tlumaczenia: {translationLogs[0] ?? 'brak'}
-      </div>
-      <UpdateStatusBar
-        status={updaterStatus}
-        isSupported={isUpdaterSupported}
-        onCheck={() => { void checkForUpdates() }}
-        onDownload={() => { void downloadUpdate() }}
-        onInstall={() => { void installUpdate() }}
-      />
-      <EditorPanel row={selectedRow} onChangeTarget={handleChangeLineTarget} />
-      <SuggestionsPanel
-        row={selectedRow}
-        suggestions={suggestions}
-        selectedSuggestionIndex={selectedSuggestionIndex}
-        onSelectSuggestionIndex={setSelectedSuggestionIndex}
-        onApplySelectedSuggestion={applySelectedSuggestion}
-        onSkip={handleSkipSuggestion}
-        projectNameById={projectNameById}
-      />
-      <VideoPanel
-        videoRef={videoRef}
-        collapsed={videoCollapsed}
-        fileName={loadedVideoName}
-        src={videoSrc}
-        currentTime={videoCurrentTime}
-        duration={videoDuration}
-        volume={videoVolume}
-        muted={videoMuted}
-        playbackRate={videoPlaybackRate}
-        autoPlayOnLineClick={autoPlayOnLineClick}
-        preRollSec={preRollSec}
-        postRollSec={postRollSec}
-        height={videoHeight}
-        onToggleCollapsed={() => setVideoCollapsed(prev => !prev)}
-        onPlayPause={handleVideoPlayPause}
-        onStop={handleVideoStop}
-        onSeekRelative={handleVideoSeekRelative}
-        onSeekAbsolute={handleVideoSeekAbsolute}
-        onVolume={value => setVideoVolume(Math.min(1, Math.max(0, value)))}
-        onMuted={setVideoMuted}
-        onRate={rate => setVideoPlaybackRate(rate)}
-        onAutoPlayOnLineClick={setAutoPlayOnLineClick}
-        onPreRoll={value => setPreRollSec(Math.min(5, Math.max(0, value)))}
-        onPostRoll={value => setPostRollSec(Math.min(5, Math.max(0, value)))}
-        onHeight={value => setVideoHeight(Math.min(460, Math.max(160, value)))}
-        onLoadVideo={() => { void handleOpenVideoFile() }}
-        errorMessage={videoError}
-        onLoadedMetadata={handleVideoLoadedMetadata}
-        onDurationChange={handleVideoDurationChange}
-        onTimeUpdate={handleVideoTimeUpdate}
-        onVideoError={handleVideoError}
-      />
-      <WaveformPanel
-        waveform={waveformData}
-        loading={waveformLoading}
-        error={waveformError}
-        currentTime={videoCurrentTime}
-        selected={waveformSelection}
-        onSeek={handleWaveformSeek}
-        onChangeLineTiming={updateLineTiming}
-        onAutoSnapStart={handleAutoSnapStart}
-        onAutoSnapEnd={handleAutoSnapEnd}
-        onAutoSnapLine={handleAutoSnapLine}
-        onAutoSnapSelected={handleAutoSnapSelected}
-        onAutoSnapAll={handleAutoSnapAll}
-      />
 
       <ApiModal
         open={isApiOpen}
