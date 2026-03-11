@@ -75,6 +75,8 @@ interface ApiRequestResult {
 
 interface DiskProjectCharacterProfile {
   archetype: string
+  characterTypeId?: string
+  characterSubtypeId?: string
   speakingTraits: string
   characterNote: string
   personalitySummary?: string

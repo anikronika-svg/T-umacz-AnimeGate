@@ -28,6 +28,13 @@ import {
   type DiskProjectConfigV1,
 } from './project/projectMapper'
 import {
+  CHARACTER_TYPE_OPTIONS,
+  getCharacterSubtypeById,
+  mapLegacyArchetypeToCharacterType,
+  normalizeCharacterTypeSelection,
+} from './project/characterArchetypes'
+import { buildCharacterArchetypePrompt } from './project/characterArchetypePrompt'
+import {
   applyProjectLineAssignments,
   buildProjectLineAssignments,
   type ProjectLineAssignment,
@@ -190,6 +197,11 @@ interface TranslationRequestContext {
   archetype: CharacterArchetypeId
   archetypeLabel: string
   archetypeToneRule: string
+  characterTypeId: string
+  characterTypeLabel: string
+  characterSubtypeId: string
+  characterSubtypeLabel: string
+  characterSubtypePrompt: string
   speakingTraits: string
   characterNote: string
   styleContext: string
@@ -2663,6 +2675,8 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       }
       const mergedProfile = {
         ...existing.profile,
+        characterTypeId: existing.profile.characterTypeId || item.profile.characterTypeId || '',
+        characterSubtypeId: existing.profile.characterSubtypeId || item.profile.characterSubtypeId || '',
         speakingTraits: existing.profile.speakingTraits.trim() || item.profile.speakingTraits.trim() || '',
         characterNote: existing.profile.characterNote.trim() || item.profile.characterNote.trim() || '',
         anilistDescription: existing.profile.anilistDescription.trim() || item.profile.anilistDescription.trim() || '',
@@ -2750,6 +2764,11 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     const nextArchetype = base.archetype !== 'default'
       ? base.archetype
       : cast.inferredArchetype
+    const fallbackTypeFromLegacy = mapLegacyArchetypeToCharacterType(nextArchetype)
+    const normalizedTypeSelection = normalizeCharacterTypeSelection(
+      base.characterTypeId || fallbackTypeFromLegacy.typeId,
+      base.characterSubtypeId || fallbackTypeFromLegacy.subtypeId,
+    )
     const nextMannerOfAddress = base.mannerOfAddress.trim()
       ? base.mannerOfAddress
       : analyzed.mannerOfAddress ?? ''
@@ -2766,6 +2785,8 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     return {
       ...base,
       archetype: nextArchetype,
+      characterTypeId: normalizedTypeSelection.typeId,
+      characterSubtypeId: normalizedTypeSelection.subtypeId,
       speakingTraits: nextTraits,
       characterNote: nextNote,
       personalitySummary: nextSummary,
@@ -3267,6 +3288,65 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                     >
                       <option value="">Globalny ({getStyleLabel(draft.globalStyle)})</option>
                       {TRANSLATION_STYLES.map(style => <option key={style.id} value={style.id}>{style.label}</option>)}
+                    </select>
+                    <select
+                      value={character.profile.characterTypeId || ''}
+                      onChange={e => {
+                        const selectedTypeId = e.currentTarget.value
+                        const normalized = normalizeCharacterTypeSelection(selectedTypeId, '')
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => (
+                            item.id === character.id
+                              ? {
+                                ...item,
+                                profile: {
+                                  ...item.profile,
+                                  characterTypeId: normalized.typeId,
+                                  characterSubtypeId: normalized.subtypeId,
+                                },
+                              }
+                              : item
+                          )),
+                        }))
+                      }}
+                      style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 11 }}
+                    >
+                      <option value="">Typ charakteru (opcjonalnie)</option>
+                      {CHARACTER_TYPE_OPTIONS.map(type => (
+                        <option key={type.id} value={type.id}>{type.label}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={character.profile.characterSubtypeId || ''}
+                      onChange={e => {
+                        const selectedSubtypeId = e.currentTarget.value
+                        const normalized = normalizeCharacterTypeSelection(character.profile.characterTypeId || '', selectedSubtypeId)
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => (
+                            item.id === character.id
+                              ? {
+                                ...item,
+                                profile: {
+                                  ...item.profile,
+                                  characterTypeId: normalized.typeId,
+                                  characterSubtypeId: normalized.subtypeId,
+                                },
+                              }
+                              : item
+                          )),
+                        }))
+                      }}
+                      style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 11 }}
+                      disabled={!character.profile.characterTypeId}
+                    >
+                      <option value="">
+                        {character.profile.characterTypeId ? 'Podtyp charakteru' : 'Najpierw wybierz typ'}
+                      </option>
+                      {(CHARACTER_TYPE_OPTIONS.find(type => type.id === character.profile.characterTypeId)?.subtypes ?? []).map(subtype => (
+                        <option key={subtype.id} value={subtype.id}>{subtype.label}</option>
+                      ))}
                     </select>
                     <select
                       value={character.profile.archetype}
@@ -3814,6 +3894,12 @@ export default function App(): React.ReactElement {
     const resolvedCharacterName = character?.name ?? row.character.trim() ?? 'Narrator'
     const effectiveStyle = resolveEffectiveStyle(styleSettings, resolvedCharacterName)
     const archetype = character?.profile.archetype ?? 'default'
+    const normalizedTypeSelection = normalizeCharacterTypeSelection(
+      character?.profile.characterTypeId || mapLegacyArchetypeToCharacterType(archetype).typeId,
+      character?.profile.characterSubtypeId || mapLegacyArchetypeToCharacterType(archetype).subtypeId,
+    )
+    const typeOption = CHARACTER_TYPE_OPTIONS.find(item => item.id === normalizedTypeSelection.typeId)
+    const subtypeOption = getCharacterSubtypeById(normalizedTypeSelection.typeId, normalizedTypeSelection.subtypeId)
     return {
       characterName: resolvedCharacterName,
       gender,
@@ -3822,6 +3908,11 @@ export default function App(): React.ReactElement {
       archetype,
       archetypeLabel: getArchetypeLabel(archetype),
       archetypeToneRule: getArchetypeToneRule(archetype),
+      characterTypeId: normalizedTypeSelection.typeId,
+      characterTypeLabel: typeOption?.label ?? '',
+      characterSubtypeId: normalizedTypeSelection.subtypeId,
+      characterSubtypeLabel: subtypeOption?.label ?? '',
+      characterSubtypePrompt: buildCharacterArchetypePrompt(normalizedTypeSelection.typeId, normalizedTypeSelection.subtypeId),
       speakingTraits: character?.profile.speakingTraits?.trim() ?? '',
       characterNote: character?.profile.characterNote?.trim() ?? '',
       styleContext: resolvedCharacterName
@@ -4451,13 +4542,17 @@ export default function App(): React.ReactElement {
     'Return only final translation text, without notes.',
     'Prioritize natural subtitle phrasing over literal word-for-word calques.',
     'Keep subtitle readability and speaking rhythm.',
-    'Style priority: character style > character archetype > character description > character gender > global style base.',
+    'Style priority: manual character fields > saved project fields > character type/subtype > auto analysis > character gender > global style base.',
     context?.characterName ? `Character: ${context.characterName}` : '',
     context?.gender ? `Character gender: ${context.gender}` : '',
     context?.effectiveStyle ? `Active style: ${context.effectiveStyle} (${context.effectiveStyleSource})` : '',
     context?.effectiveStyle ? `Style directive: ${styleDirective(context.effectiveStyle)}` : '',
     context?.archetypeLabel ? `Character archetype: ${context.archetypeLabel} (${context.archetype})` : '',
     context?.archetypeToneRule ? `Archetype tone rule: ${context.archetypeToneRule}` : '',
+    context?.characterTypeLabel ? `Character type (PL): ${context.characterTypeLabel} (${context.characterTypeId})` : '',
+    context?.characterSubtypeLabel ? `Character subtype (PL): ${context.characterSubtypeLabel} (${context.characterSubtypeId})` : '',
+    context?.characterSubtypePrompt ? `Character type/subtype directive:\n${context.characterSubtypePrompt}` : '',
+    (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
     context?.characterNote ? `Character note to respect: ${context.characterNote}` : '',
     context?.styleContext ? `Style context:\n${context.styleContext}` : '',
@@ -4990,6 +5085,8 @@ export default function App(): React.ReactElement {
             && !context.characterNote
             && !context.speakingTraits
             && context.archetype === 'default'
+            && !context.characterTypeId
+            && !context.characterSubtypeId
             && context.effectiveStyleSource === 'global'
           ))
           if (!canUseBatch) {

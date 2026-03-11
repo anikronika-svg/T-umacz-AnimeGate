@@ -306,6 +306,8 @@ export function buildTranslationStyleContext(
     `Styl globalny: ${getStyleLabel(settings.globalStyle)}`,
     `Styl aktywny: ${getStyleLabel(effective.style)} (${effective.source === 'character' ? 'nadpisanie postaci' : 'globalny'})`,
     `Archetyp: ${getArchetypeLabel(character?.profile.archetype ?? 'default')}`,
+    character?.profile.characterTypeId ? `Typ charakteru: ${character.profile.characterTypeId}` : '',
+    character?.profile.characterSubtypeId ? `Podtyp charakteru: ${character.profile.characterSubtypeId}` : '',
     `STYLE_ID_ACTIVE: ${effective.style}`,
     `STYLE_SOURCE: ${effective.source}`,
   ]

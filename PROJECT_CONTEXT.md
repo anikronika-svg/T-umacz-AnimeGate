@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.3`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.13`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -444,3 +444,53 @@
   - wiecej miejsca pionowego dla tabeli napisow.
 - Zakres:
   - tylko korekta UI/layout; logika aplikacji bez zmian.
+
+## 25) System charakterow postaci v1 (typ + podtyp) (v1.0.13)
+- Zakres:
+  - wdrozono pelny fundament typu i podtypu charakteru postaci w Kroku 3, z realnym wplywem na prompt tlumaczenia dla konkretnej postaci.
+  - UI etykiety i opisy sa po polsku, logika wewnetrzna identyfikatorow po angielsku/ascii.
+- Dane i architektura:
+  - nowy modul danych:
+    - `src/project/characterArchetypes.ts`
+    - zawiera 25 glownych typow (m.in. Tsundere, Yandere, Kuudere, Bohater, Antybohater, Zloczynca, Mentor, Wojownik itd.)
+    - kazdy typ ma liste podtypow oraz parametry mowy:
+      - `tone`
+      - `politenessLevel`
+      - `emotionality`
+      - `vocabularyType`
+      - `mannerOfAddress`
+      - `reactionStyle`
+      - `speechPacing`
+  - nowy helper promptu:
+    - `src/project/characterArchetypePrompt.ts`
+    - buduje instrukcje stylu mowy dla LLM na podstawie wybranego typu/podtypu.
+  - rozszerzony model profilu postaci:
+    - `characterTypeId`
+    - `characterSubtypeId`
+  - kompatybilnosc ze starymi danymi:
+    - bez migracji schematu (dalej `schemaVersion=1`),
+    - fallback mapuje stare `archetype` na nowe `type/subtype` tam, gdzie nowe pola sa puste.
+- Krok 3 (UI):
+  - dodano dwa nowe pola per postac:
+    - `Typ charakteru`
+    - `Podtyp charakteru`
+  - dropdown podtypu filtruje opcje do aktualnie wybranego typu.
+  - zachowano dotychczasowe pola reczne (`cechy mowienia`, `opis charakteru`, itd.).
+- Wplyw na tlumaczenie:
+  - `buildSystemPrompt` dostaje teraz:
+    - wybrany typ i podtyp (PL label + id),
+    - szczegolowa dyrektywe stylu wynikajaca z podtypu.
+  - priorytet zapisany jawnie w promptcie:
+    1) reczne pola postaci
+    2) zapisane dane projektu
+    3) typ/podtyp charakteru
+    4) auto-analiza AniList
+  - dla DeepL batch mode dodano guard: przy aktywnym typie/podtypie linie nie sa laczone w neutralny batch per projekt.
+- Persistencja projektu:
+  - `characterTypeId` i `characterSubtypeId` zapisywane/odczytywane w:
+    - `src/project/projectMapper.ts`
+    - `electron/projectStorage.ts`
+    - `electron/preload.ts`
+    - `src/electron.d.ts`
+- Otwarte rzeczy (kolejny etap):
+  - mozna rozszerzyc automatyczne przypisywanie typu/podtypu bezposrednio z analizy AniList (obecnie fallback idzie przez mapowanie legacy archetype -> type/subtype).

@@ -1,4 +1,4 @@
-export {}
+﻿export {}
 
 declare global {
   interface Window {
@@ -139,6 +139,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -167,6 +169,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -204,6 +208,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -228,6 +234,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -266,6 +274,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -290,6 +300,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -326,6 +338,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -350,6 +364,8 @@ declare global {
               style: string | null
               profile: {
                 archetype: string
+                characterTypeId?: string
+                characterSubtypeId?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -370,3 +386,4 @@ declare global {
     }
   }
 }
+

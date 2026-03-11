@@ -6,6 +6,8 @@ export const PROJECT_SCHEMA_VERSION = 1
 
 export interface DiskProjectCharacterProfile {
   archetype: string
+  characterTypeId?: string
+  characterSubtypeId?: string
   speakingTraits: string
   characterNote: string
   personalitySummary?: string
