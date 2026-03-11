@@ -21,6 +21,12 @@ import {
 import { getAnimeCharactersForSeries, searchAnimeByTitle, type AniListAnimeResult, type AniListCharacter } from './anilist'
 import { buildAssOrSsaContent, parseAssOrSsa, type ParsedSubtitleFile } from './subtitleParser'
 import { useUpdaterStatus, type UpdaterStatus } from './hooks/useUpdaterStatus'
+import {
+  PROJECT_SCHEMA_VERSION,
+  buildDiskProjectConfig as mapAppStateToProjectConfig,
+  hydrateStateFromDiskProject,
+  type DiskProjectConfigV1,
+} from './project/projectMapper'
 
 const C = {
   bg0: '#1e1e2e',
@@ -82,63 +88,7 @@ interface SeriesProjectMeta {
   lastUpdated: string
 }
 
-const PROJECT_SCHEMA_VERSION = 1
 const ACTIVE_DISK_PROJECT_STORAGE_KEY = 'animegate.active-disk-project.v1'
-
-interface DiskProjectCharacterProfile {
-  archetype: string
-  speakingTraits: string
-  characterNote: string
-  anilistDescription: string
-  mannerOfAddress: string
-  politenessLevel: string
-  vocabularyType: string
-  temperament: string
-}
-
-interface DiskProjectCharacter {
-  id: number
-  name: string
-  anilistCharacterId?: number | null
-  anilistRole?: string
-  gender: string
-  avatarColor: string
-  style: string | null
-  profile: DiskProjectCharacterProfile
-}
-
-interface DiskProjectConfigV1 {
-  schemaVersion: number
-  projectId: string
-  title: string
-  projectDir: string
-  configPath: string
-  createdAt: string
-  updatedAt: string
-  anilist: {
-    id: number | null
-    title: string
-  }
-  translationPreferences: {
-    sourceLang: string
-    targetLang: string
-    preferredModelId: string
-  }
-  characterWorkflow: {
-    characters: DiskProjectCharacter[]
-    lineCharacterAssignments: Array<{
-      lineId: number
-      rawCharacter: string
-      resolvedCharacterName: string
-    }>
-  }
-  translationStyleSettings: {
-    projectId: string
-    globalStyle: string
-    characters: DiskProjectCharacter[]
-    updatedAt: string
-  }
-}
 
 interface ActiveDiskProject {
   projectId: string
@@ -2530,12 +2480,13 @@ interface CharacterModalProps {
   settings: ProjectTranslationStyleSettings
   rows: DialogRow[]
   projectId: string
+  projectMeta: { title: string; anilistId: number | null } | null
   onClose: () => void
   onSave: (next: ProjectTranslationStyleSettings) => void
   onProjectMetaUpdate?: (meta: { title: string; anilistId: number | null }) => void
 }
 
-function CharacterModal({ open, settings, rows, projectId, onClose, onSave, onProjectMetaUpdate }: CharacterModalProps): React.ReactElement | null {
+function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose, onSave, onProjectMetaUpdate }: CharacterModalProps): React.ReactElement | null {
   const [step, setStep] = useState<CharacterStep>('step1')
   const [draft, setDraft] = useState<ProjectTranslationStyleSettings>(settings)
   const [search, setSearch] = useState('')
@@ -2647,13 +2598,41 @@ function CharacterModal({ open, settings, rows, projectId, onClose, onSave, onPr
 
   const normalizeDraftCharacters = (list: CharacterStyleAssignment[]): CharacterStyleAssignment[] => dedupeAssignments(list)
 
+  const mapDraftCharacterToWorkerCast = (character: CharacterStyleAssignment): AniListCharacter => ({
+    id: Number.isFinite(character.anilistCharacterId) ? (character.anilistCharacterId as number) : numericIdFromName(character.name),
+    name: character.name,
+    gender: character.gender,
+    avatarColor: character.avatarColor,
+    roleLabel: (character.anilistRole as AniListCharacter['roleLabel']) ?? 'Unknown',
+    imageUrl: null,
+    description: character.profile.anilistDescription || '',
+    descriptionShort: character.profile.characterNote || '',
+    personalityTraits: character.profile.speakingTraits
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+      .slice(0, 8),
+    inferredArchetype: character.profile.archetype,
+    inferredStyle: character.style,
+    inferredMannerOfAddress: character.profile.mannerOfAddress,
+    inferredPolitenessLevel: character.profile.politenessLevel,
+    inferredVocabularyType: character.profile.vocabularyType,
+    inferredTemperament: character.profile.temperament,
+  })
+
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setStep('step1')
       setDraft({ ...settings, characters: normalizeDraftCharacters(settings.characters) })
       setSearch('')
       setSearchResults([])
-      setSelectedAnime(null)
+      setSelectedAnime(projectMeta?.anilistId
+        ? {
+          id: projectMeta.anilistId,
+          title: projectMeta.title || settings.projectId,
+          seasonLabel: 'z projektu',
+        }
+        : null)
       setSelectedAnimeCast([])
       setIsSearching(false)
       setIsLoadingCast(false)
@@ -2668,11 +2647,11 @@ function CharacterModal({ open, settings, rows, projectId, onClose, onSave, onPr
       } catch {
         setImageCacheByName({})
       }
-      // Krok 1 ma startować z pustą bazą roboczą po prawej stronie.
-      setWorkerCast([])
+      // Krok 1 przy odtwarzaniu projektu startuje z zapisaną bazą roboczą postaci.
+      setWorkerCast(normalizeDraftCharacters(settings.characters).map(mapDraftCharacterToWorkerCast))
     }
     wasOpenRef.current = open
-  }, [open, settings, rows])
+  }, [open, settings, rows, projectMeta])
 
   useEffect(() => {
     localStorage.setItem(charImageCacheKey(projectId), JSON.stringify(imageCacheByName))
@@ -3575,6 +3554,10 @@ export default function App(): React.ReactElement {
   }, [])
 
   const selectedRow = rowsData.find(row => row.id === selectedId)
+  const activeSeriesMeta = useMemo(
+    () => seriesProjects.find(project => project.id === currentProjectId) ?? null,
+    [seriesProjects, currentProjectId],
+  )
   useEffect(() => {
     upsertSeriesProjectMeta(currentProjectId, {
       preferredModelId: selectedModelId,
@@ -3886,7 +3869,6 @@ export default function App(): React.ReactElement {
     const projectId = projectIdOverride ?? currentProjectId
     const meta = seriesProjects.find(project => project.id === projectId)
     const title = titleOverride ?? meta?.title ?? projectId
-    const now = new Date().toISOString()
     const lineCharacterAssignments = rowsData
       .map(row => ({
         lineId: row.id,
@@ -3895,45 +3877,28 @@ export default function App(): React.ReactElement {
       }))
       .filter(item => item.rawCharacter.trim().length > 0)
 
-    return {
-      schemaVersion: PROJECT_SCHEMA_VERSION,
+    return mapAppStateToProjectConfig({
       projectId,
       title,
+      anilistId: meta?.anilistId ?? null,
       projectDir,
       configPath,
-      createdAt: now,
-      updatedAt: now,
-      anilist: {
-        id: meta?.anilistId ?? null,
-        title,
-      },
-      translationPreferences: {
-        sourceLang,
-        targetLang,
-        preferredModelId: selectedModelId,
-      },
-      characterWorkflow: {
-        characters: styleSettings.characters.map(character => ({
-          ...character,
-          gender: character.gender,
-        })),
-        lineCharacterAssignments,
-      },
-      translationStyleSettings: {
-        ...styleSettings,
-        projectId,
-        updatedAt: now,
-      },
-    }
+      sourceLang,
+      targetLang,
+      preferredModelId: selectedModelId,
+      styleSettings,
+      lineCharacterAssignments,
+    })
   }
 
   const hydrateFromDiskProject = (config: DiskProjectConfigV1, projectDir: string, configPath: string): void => {
-    const projectId = sanitizeProjectId(config.projectId) || config.projectId
-    const projectTitle = config.title?.trim() || projectId
-    const preferredModelId = config.translationPreferences?.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID
-    const source = config.translationPreferences?.sourceLang || 'en'
-    const target = config.translationPreferences?.targetLang || 'pl'
-    const anilistId = Number.isFinite(config.anilist?.id) ? config.anilist.id : null
+    const hydrated = hydrateStateFromDiskProject(config)
+    const projectId = sanitizeProjectId(hydrated.projectId) || hydrated.projectId
+    const projectTitle = hydrated.title
+    const preferredModelId = hydrated.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID
+    const source = hydrated.sourceLang || 'en'
+    const target = hydrated.targetLang || 'pl'
+    const anilistId = Number.isFinite(hydrated.anilistId) ? hydrated.anilistId : null
 
     const nextMeta: SeriesProjectMeta = {
       id: projectId,
@@ -3951,30 +3916,8 @@ export default function App(): React.ReactElement {
     })
 
     const restoredSettings: ProjectTranslationStyleSettings = {
+      ...hydrated.styleSettings,
       projectId,
-      globalStyle: (config.translationStyleSettings?.globalStyle as TranslationStyleId) || 'neutral',
-      characters: Array.isArray(config.translationStyleSettings?.characters)
-        ? config.translationStyleSettings.characters.map((item, idx) => ({
-          id: Number.isFinite(item.id) ? item.id : idx + 1,
-          name: item.name || `Character_${idx + 1}`,
-          anilistCharacterId: item.anilistCharacterId ?? null,
-          anilistRole: item.anilistRole,
-          gender: (item.gender as CharacterGender) || 'Unknown',
-          avatarColor: item.avatarColor || '#4f8ad6',
-          style: (item.style as TranslationStyleId | null) ?? null,
-          profile: {
-            archetype: (item.profile?.archetype as CharacterArchetypeId) || 'default',
-            speakingTraits: item.profile?.speakingTraits || '',
-            characterNote: item.profile?.characterNote || '',
-            anilistDescription: item.profile?.anilistDescription || '',
-            mannerOfAddress: item.profile?.mannerOfAddress || '',
-            politenessLevel: item.profile?.politenessLevel || '',
-            vocabularyType: item.profile?.vocabularyType || '',
-            temperament: item.profile?.temperament || '',
-          },
-        }))
-        : createProjectStyleSettings(projectId, BASE_PROJECT_CHARACTERS).characters,
-      updatedAt: config.translationStyleSettings?.updatedAt || new Date().toISOString(),
     }
 
     setSourceLang(source)
@@ -5767,6 +5710,12 @@ export default function App(): React.ReactElement {
         settings={styleSettings}
         rows={rowsData}
         projectId={currentProjectId}
+        projectMeta={activeSeriesMeta
+          ? {
+            title: activeSeriesMeta.title,
+            anilistId: activeSeriesMeta.anilistId,
+          }
+          : null}
         onClose={() => setCharactersOpen(false)}
         onSave={saveStyles}
         onProjectMetaUpdate={handleProjectMetaUpdate}

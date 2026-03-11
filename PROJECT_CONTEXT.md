@@ -3,8 +3,9 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.2`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.3`.
 - Ostatnie commity:
+  - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
   - `48ca83b` – workflow release + bump do `1.0.1`
   - `35138bf` – foundation auto-update (electron-updater + publish config + release:win)
@@ -229,3 +230,28 @@
 ## 13) Następny krok (Krok 0 integracja v2)
 - Ujednolicić i zapisywać pełny stan kroków 1/2/3 do projektu (w tym pełniejsze mapowanie przypisań linii i metadanych castu).
 - Dodać walidację kompatybilności i migracje schematu (`v1 -> v2`) bez łamania istniejących projektów.
+
+## 14) Krok 0: integracja danych Kroków 1/2/3 (v2)
+- Dodano jawny mapper stanu projektu:
+  - `src/project/projectMapper.ts`
+  - kierunki mapowania:
+    - `app state -> animegate-project.json`
+    - `animegate-project.json -> app state`
+- Dane kroków 1/2/3 zapisywane i przywracane przez mapper:
+  - wybrane anime (meta AniList: `anilist.id`, tytuł projektu),
+  - lista postaci roboczych (char workflow),
+  - role (`anilistRole`),
+  - płeć (`gender`),
+  - ręczne korekty postaci (style, profile, notatki),
+  - ustawienia stylu tłumaczenia z Kroku 3 (`globalStyle`, per-postać `style`, profile),
+  - przypisania linii do postaci (`lineCharacterAssignments`: `lineId`, `rawCharacter`, `resolvedCharacterName`).
+- Character Modal (Kroki 1/2/3) przy otwarciu odtwarza teraz:
+  - bazę roboczą postaci po prawej (worker cast) na podstawie zapisanych postaci projektu,
+  - meta wybranego anime jeśli projekt ma `anilistId`.
+- Zostawiono kompatybilność i brak migracji schematu:
+  - nadal `schemaVersion = 1`,
+  - bez zmian łamiących istniejące projekty.
+
+## 15) Otwarte braki do pełnego systemu projektów
+- Brak pełnej, oddzielnej persystencji tymczasowych wyników wyszukiwania AniList (lista wyników i zaznaczenia z lewego panelu Kroku 1).
+- Brak formalnych testów automatycznych E2E GUI dla scenariusza: utwórz projekt -> ustaw kroki 1/2/3 -> restart -> otwórz projekt -> weryfikacja UI.
