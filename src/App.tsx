@@ -50,6 +50,7 @@ import {
   CharacterAssignmentGrid,
   type CharacterAssignmentGridItem,
 } from './components/CharacterAssignmentGrid'
+import { VideoSubtitleOverlay } from './components/VideoSubtitleOverlay'
 
 const C = {
   bg0: '#1e1e2e',
@@ -1195,6 +1196,7 @@ function LeftSidebar({
   onDurationChange,
   onTimeUpdate,
   onVideoError,
+  onToggleVideoExpanded,
   projectOptions,
   currentProjectId,
   onSelectProjectId,
@@ -1223,6 +1225,7 @@ function LeftSidebar({
   onDurationChange: () => void
   onTimeUpdate: () => void
   onVideoError: () => void
+  onToggleVideoExpanded: () => void
   projectOptions: SeriesProjectMeta[]
   currentProjectId: string
   onSelectProjectId: (projectId: string) => void
@@ -1258,10 +1261,18 @@ function LeftSidebar({
             </div>
           )}
         </div>
-        <div style={{ marginTop: 4, fontSize: 11, color: C.textDim, display: 'flex', justifyContent: 'space-between' }}>
+        <div style={{ marginTop: 4, fontSize: 11, color: C.textDim, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
           <span>{videoSrc ? 'Podglad wideo' : 'Podglad nieaktywny'}</span>
           <span>{formatClockTime(videoCurrentTime)} / {formatClockTime(videoDuration)}</span>
         </div>
+        <button
+          style={{ ...BASE_BTN, marginTop: 4, width: '100%', height: 24 }}
+          onClick={onToggleVideoExpanded}
+          disabled={!videoSrc}
+          title={videoSrc ? 'Powiekszony podglad z napisami kontekstowymi' : 'Najpierw zaladuj wideo'}
+        >
+          Powieksz podglad
+        </button>
         {videoError && (
           <div style={{ marginTop: 4, fontSize: 10, color: C.accentR, maxHeight: 36, overflow: 'auto' }}>{videoError}</div>
         )}
@@ -3572,8 +3583,17 @@ function LinesView({
   onActivateLine: (id: number) => void
   getGenderForCharacter: (characterName: string) => CharacterGender | undefined
 }): React.ReactElement {
+  const listRef = useRef<HTMLDivElement | null>(null)
   const col = '30px 34px 94px 94px 78px 122px 1fr 1fr'
   const headers = ['⚥', '#', 'Start', 'Koniec', 'Styl', 'Postac', 'Oryginal', 'Tlumaczenie']
+
+  useEffect(() => {
+    const container = listRef.current
+    if (!container) return
+    const rowEl = container.querySelector<HTMLElement>(`[data-line-id="${selectedId}"]`)
+    if (!rowEl) return
+    rowEl.scrollIntoView({ block: 'nearest' })
+  }, [selectedId])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -3587,7 +3607,7 @@ function LinesView({
           </span>
         ))}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+      <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
         {rows.map(row => {
           const active = row.id === selectedId
           const marked = selectedIds.has(row.id)
@@ -3595,6 +3615,7 @@ function LinesView({
           return (
             <div
               key={row.id}
+              data-line-id={row.id}
               onClick={event => onSelect(row.id, { additive: event.ctrlKey || event.metaKey, range: event.shiftKey })}
               onDoubleClick={() => onActivateLine(row.id)}
               style={{
@@ -3606,8 +3627,15 @@ function LinesView({
                 alignItems: 'center',
                 borderBottom: `1px solid ${C.borderB}`,
                 cursor: 'pointer',
-                background: translating ? '#344226' : active || marked ? '#282a44' : 'transparent',
-                borderLeft: translating ? `2px solid ${C.accentG}` : active ? `2px solid ${C.accent}` : '2px solid transparent',
+                background: translating
+                  ? '#344226'
+                  : active
+                    ? '#33406a'
+                    : marked
+                      ? '#282a44'
+                      : 'transparent',
+                borderLeft: translating ? `3px solid ${C.accentG}` : active ? `3px solid ${C.accent}` : '3px solid transparent',
+                boxShadow: active ? 'inset 0 0 0 1px rgba(137,180,250,0.35)' : 'none',
               }}
               onMouseEnter={e => { if (!active) e.currentTarget.style.background = C.bg3 }}
               onMouseLeave={e => {
@@ -3660,6 +3688,7 @@ export default function App(): React.ReactElement {
   const [videoMuted, setVideoMuted] = useState(false)
   const [videoPlaybackRate, setVideoPlaybackRate] = useState(1)
   const [videoError, setVideoError] = useState('')
+  const [isExpandedVideoOpen, setExpandedVideoOpen] = useState(false)
   const [waveformData, setWaveformData] = useState<WaveformData | null>(null)
   const [waveformLoading, setWaveformLoading] = useState(false)
   const [waveformError, setWaveformError] = useState('')
@@ -3700,6 +3729,7 @@ export default function App(): React.ReactElement {
   const providerCooldownUntilRef = useRef<number>(0)
   const rowsDataRef = useRef<DialogRow[]>(rowsData)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const expandedVideoRef = useRef<HTMLVideoElement | null>(null)
   const lastLineSyncFromVideoRef = useRef<number | null>(null)
   const pauseAtAfterLineRef = useRef<number | null>(null)
   const hydratedProjectIdRef = useRef<string | null>(null)
@@ -4103,6 +4133,22 @@ export default function App(): React.ReactElement {
     video.muted = videoMuted
     video.playbackRate = videoPlaybackRate
   }, [videoVolume, videoMuted, videoPlaybackRate, videoSrc])
+
+  useEffect(() => {
+    const primary = videoRef.current
+    const expanded = expandedVideoRef.current
+    if (!primary || !expanded || !isExpandedVideoOpen) return
+    expanded.muted = true
+    expanded.playbackRate = primary.playbackRate
+    if (Math.abs(expanded.currentTime - primary.currentTime) > 0.22) {
+      expanded.currentTime = primary.currentTime
+    }
+    if (!primary.paused && expanded.paused) {
+      void expanded.play().catch(() => undefined)
+    } else if (primary.paused && !expanded.paused) {
+      expanded.pause()
+    }
+  }, [isExpandedVideoOpen, videoCurrentTime, videoPlaybackRate, videoSrc])
 
   useEffect(() => {
     if (!videoPath || !window.electronAPI?.getVideoWaveform) {
@@ -5814,6 +5860,7 @@ export default function App(): React.ReactElement {
     if (lastLineSyncFromVideoRef.current === active.id) return
     lastLineSyncFromVideoRef.current = active.id
     setSelectedId(prev => (prev === active?.id ? prev : active!.id))
+    setSelectedLineIds(prev => (prev.has(active!.id) && prev.size === 1 ? prev : new Set([active!.id])))
   }
 
   const handleVideoPlayPause = (): void => {
@@ -6071,6 +6118,7 @@ export default function App(): React.ReactElement {
           onDurationChange={handleVideoDurationChange}
           onTimeUpdate={handleVideoTimeUpdate}
           onVideoError={handleVideoError}
+          onToggleVideoExpanded={() => setExpandedVideoOpen(true)}
           projectOptions={seriesProjects}
           currentProjectId={projectPickerId}
           onSelectProjectId={setProjectPickerId}
@@ -6134,6 +6182,37 @@ export default function App(): React.ReactElement {
           />
         </div>
       </div>
+
+      {isExpandedVideoOpen && videoSrc && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(7,10,16,0.88)', zIndex: 1400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}
+          onClick={() => setExpandedVideoOpen(false)}
+        >
+          <div
+            style={{ width: 'min(1500px, 96vw)', height: 'min(860px, 92vh)', border: `1px solid ${C.border}`, borderRadius: 10, background: '#10131d', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            onClick={event => event.stopPropagation()}
+          >
+            <div style={{ height: 34, borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 10px', background: '#171a24' }}>
+              <div style={{ fontSize: 12, color: C.textDim }}>
+                Powiekszony podglad sceny • Spacja: play/pause • Klik linii: skok do sceny
+              </div>
+              <button style={BASE_BTN} onClick={() => setExpandedVideoOpen(false)}>Zamknij</button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, position: 'relative', background: '#000' }}>
+              <video
+                ref={expandedVideoRef}
+                src={videoSrc}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                onClick={() => handleVideoPlayPause()}
+              />
+              <VideoSubtitleOverlay
+                sourceText={stripAssFormatting(selectedRow?.sourceRaw ?? selectedRow?.source ?? '').trim()}
+                targetText={stripAssFormatting(selectedRow?.target ?? '').trim()}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <ApiModal
         open={isApiOpen}

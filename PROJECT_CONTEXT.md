@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.20`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.21`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -672,3 +672,24 @@
   - klik karty nadal przypisuje postac do zaznaczonej linii lub wielu linii,
   - `Brak postaci` nadal czyści przypisanie,
   - zapis projektu i autozapis pozostaja zgodne z obecnym flow.
+
+## 33) Podglad wideo i synchronizacja linia <-> scena (v1.0.21)
+- Wzmocniono workflow pracy z wideo:
+  - klik linii dialogowej nadal wykonuje seek do startu linii, a dodatkowo wyrazniej stabilizuje aktywny wybor,
+  - podczas odtwarzania synchronizacja czasu aktualizuje aktywna linie i zaznaczenie (`selectedId` + pojedyncze `selectedLineIds`).
+- Dodano auto-scroll aktywnej linii:
+  - tabela dialogow przewija sie automatycznie, aby aktywna linia byla widoczna (`scrollIntoView` w `LinesView`).
+- Dopracowano podswietlenie aktywnej linii:
+  - mocniejsze tlo aktywnej pozycji,
+  - grubsza lewa belka akcentu,
+  - delikatny wewnetrzny outline aktywnego wiersza.
+- Dodano powiekszony podglad wideo:
+  - przycisk `Powieksz podglad` w sekcji mini-playera (lewy sidebar),
+  - modal z duzym playerem sceny.
+- Dodano overlay napisow w powiekszonym podgladzie:
+  - oryginal u gory,
+  - polski tekst na dole,
+  - czytelny styl (biale napisy + cien + polprzezroczyste tlo).
+- Spacja = play/pause:
+  - utrzymano globalny skrót play/pause poza polami tekstowymi,
+  - wpisywanie spacji w polach edycji pozostaje bez zmian (guard dla input/textarea/contentEditable).
