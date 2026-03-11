@@ -430,3 +430,17 @@
 - Efekt:
   - bardziej zwarty i przewidywalny workflow,
   - mniej marnowanego miejsca i wyrazny podzial narzedzi vs obszar roboczy.
+
+## 24) UI correction po refaktorze layoutu (v1.0.12)
+- Przywrocono podglad wideo w lewym sidebarze:
+  - kontener podgladu nad przyciskami narzedzi,
+  - wysokosc ~220 px, szerokosc = sidebar,
+  - natywne kontrolki video (`play/pause/seek`),
+  - podpiete istniejace handlery (`onLoadedMetadata`, `onDurationChange`, `onTimeUpdate`, `onError`) i ten sam `videoRef`.
+- Zmiana etykiety przycisku:
+  - `Zaladuj` -> `Dodaj wideo`.
+- Korekta przestrzeni roboczej:
+  - panel `Edycja linii` zmniejszony z 212px do 126px,
+  - wiecej miejsca pionowego dla tabeli napisow.
+- Zakres:
+  - tylko korekta UI/layout; logika aplikacji bez zmian.

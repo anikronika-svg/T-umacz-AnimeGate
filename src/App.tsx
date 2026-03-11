@@ -1163,6 +1163,15 @@ function LeftSidebar({
   onOpenMemory,
   onOpenGenderCorrection,
   onLoadVideo,
+  videoRef,
+  videoSrc,
+  videoError,
+  videoCurrentTime,
+  videoDuration,
+  onLoadedMetadata,
+  onDurationChange,
+  onTimeUpdate,
+  onVideoError,
   projectOptions,
   currentProjectId,
   onSelectProjectId,
@@ -1176,6 +1185,15 @@ function LeftSidebar({
   onOpenMemory: () => void
   onOpenGenderCorrection: () => void
   onLoadVideo: () => void
+  videoRef: React.RefObject<HTMLVideoElement>
+  videoSrc: string | null
+  videoError: string
+  videoCurrentTime: number
+  videoDuration: number
+  onLoadedMetadata: () => void
+  onDurationChange: () => void
+  onTimeUpdate: () => void
+  onVideoError: () => void
   projectOptions: SeriesProjectMeta[]
   currentProjectId: string
   onSelectProjectId: (projectId: string) => void
@@ -1186,12 +1204,40 @@ function LeftSidebar({
 }): React.ReactElement {
   return (
     <div style={{ width: 290, minWidth: 290, borderRight: `1px solid ${C.border}`, background: '#1a1b23', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8 }}>
+        <div style={{ height: 220, border: `1px solid ${C.borderB}`, background: '#090a0f', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+          {videoSrc ? (
+            <video
+              ref={videoRef}
+              src={videoSrc}
+              controls
+              style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+              onLoadedMetadata={onLoadedMetadata}
+              onDurationChange={onDurationChange}
+              onTimeUpdate={onTimeUpdate}
+              onError={onVideoError}
+            />
+          ) : (
+            <div style={{ fontSize: 11, color: C.textDim, textAlign: 'center', padding: 8 }}>
+              Brak wideo
+            </div>
+          )}
+        </div>
+        <div style={{ marginTop: 4, fontSize: 11, color: C.textDim, display: 'flex', justifyContent: 'space-between' }}>
+          <span>{videoSrc ? 'Podglad wideo' : 'Podglad nieaktywny'}</span>
+          <span>{formatClockTime(videoCurrentTime)} / {formatClockTime(videoDuration)}</span>
+        </div>
+        {videoError && (
+          <div style={{ marginTop: 4, fontSize: 10, color: C.accentR, maxHeight: 36, overflow: 'auto' }}>{videoError}</div>
+        )}
+      </div>
+
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <button style={BASE_BTN} onClick={onOpenApi}>API</button>
         <button style={BASE_BTN} onClick={onOpenCharacters}>Postacie</button>
         <button style={BASE_BTN} onClick={onOpenMemory}>Pamiec</button>
         <button style={BASE_BTN} onClick={onOpenGenderCorrection}>Koryguj plec</button>
-        <button style={{ ...BASE_BTN, gridColumn: '1 / -1', background: '#2d4b7d', borderColor: '#3f7ed2' }} onClick={onLoadVideo}>Zaladuj</button>
+        <button style={{ ...BASE_BTN, gridColumn: '1 / -1', background: '#2d4b7d', borderColor: '#3f7ed2' }} onClick={onLoadVideo}>Dodaj wideo</button>
       </div>
 
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'grid', gap: 6 }}>
@@ -1394,7 +1440,7 @@ function EditorPanel({
   onChangeTarget: (lineId: number, target: string) => void
 }): React.ReactElement {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 212, borderTop: `1px solid ${C.border}` }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 126, borderTop: `1px solid ${C.border}` }}>
       <div style={{ height: 20, display: 'flex', alignItems: 'center', padding: '0 8px', background: '#1d1f2a', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.accent, fontWeight: 700 }}>
         Edycja linii
       </div>
@@ -5695,6 +5741,15 @@ export default function App(): React.ReactElement {
           onOpenMemory={() => setMemoryOpen(true)}
           onOpenGenderCorrection={() => setGenderCorrectionOpen(true)}
           onLoadVideo={() => { void handleOpenVideoFile() }}
+          videoRef={videoRef}
+          videoSrc={videoSrc}
+          videoError={videoError}
+          videoCurrentTime={videoCurrentTime}
+          videoDuration={videoDuration}
+          onLoadedMetadata={handleVideoLoadedMetadata}
+          onDurationChange={handleVideoDurationChange}
+          onTimeUpdate={handleVideoTimeUpdate}
+          onVideoError={handleVideoError}
           projectOptions={seriesProjects}
           currentProjectId={projectPickerId}
           onSelectProjectId={setProjectPickerId}
