@@ -1172,6 +1172,105 @@ function ActionBar({
   )
 }
 
+interface CharacterAssignmentSidebarItem {
+  id: number
+  name: string
+  gender: CharacterGender
+  role?: string
+  avatarColor: string
+}
+
+function CharacterAssignmentPanel({
+  characters,
+  selectedLineCount,
+  activeCharacterName,
+  onAssignCharacter,
+  onClearAssignment,
+}: {
+  characters: CharacterAssignmentSidebarItem[]
+  selectedLineCount: number
+  activeCharacterName: string
+  onAssignCharacter: (characterName: string) => void
+  onClearAssignment: () => void
+}): React.ReactElement {
+  return (
+    <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>Postacie do przypisywania</div>
+        <div style={{ fontSize: 10, color: C.textDim }}>Zaznaczone: {selectedLineCount}</div>
+      </div>
+      <button
+        style={{
+          ...BASE_BTN,
+          marginBottom: 6,
+          width: '100%',
+          background: activeCharacterName ? C.surface : '#284267',
+          borderColor: activeCharacterName ? C.border : '#3f7ed2',
+          color: activeCharacterName ? C.textDim : '#fff',
+        }}
+        onClick={onClearAssignment}
+      >
+        Brak postaci
+      </button>
+      <div style={{ maxHeight: 230, overflowY: 'auto', border: `1px solid ${C.borderB}`, background: '#171925' }}>
+        {characters.map(character => {
+          const isActive = activeCharacterName === character.name
+          return (
+            <button
+              key={character.id}
+              style={{
+                width: '100%',
+                display: 'grid',
+                gridTemplateColumns: '24px 1fr',
+                gap: 8,
+                alignItems: 'center',
+                border: 'none',
+                borderBottom: `1px solid ${C.borderB}`,
+                background: isActive ? '#2b3552' : 'transparent',
+                color: C.text,
+                padding: '6px 8px',
+                textAlign: 'left',
+                cursor: 'pointer',
+              }}
+              onClick={() => onAssignCharacter(character.name)}
+            >
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: character.avatarColor || '#4f8ad6',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: '#fff',
+                }}
+              >
+                {(character.name.trim().slice(0, 1) || '?').toUpperCase()}
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 12, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {character.name}
+                </span>
+                <span style={{ display: 'block', fontSize: 10, color: C.textDim, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {genderLabel(character.gender)}{character.role ? ` • ${character.role}` : ''}
+                </span>
+              </span>
+            </button>
+          )
+        })}
+        {characters.length === 0 && (
+          <div style={{ padding: 10, fontSize: 11, color: C.textDim }}>
+            Brak postaci w aktywnym projekcie. Dodaj je w Kroku 1 (Postacie).
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function LeftSidebar({
   onOpenApi,
   onOpenCharacters,
@@ -1192,6 +1291,11 @@ function LeftSidebar({
   onSelectProjectId,
   onOpenProjectStep,
   onLoadProject,
+  assignmentCharacters,
+  selectedLineCount,
+  activeAssignmentCharacter,
+  onAssignCharacter,
+  onClearCharacterAssignment,
   activeDiskProjectTitle,
   loadedFileName,
 }: {
@@ -1214,6 +1318,11 @@ function LeftSidebar({
   onSelectProjectId: (projectId: string) => void
   onOpenProjectStep: () => void
   onLoadProject: () => void
+  assignmentCharacters: CharacterAssignmentSidebarItem[]
+  selectedLineCount: number
+  activeAssignmentCharacter: string
+  onAssignCharacter: (characterName: string) => void
+  onClearCharacterAssignment: () => void
   activeDiskProjectTitle: string
   loadedFileName: string
 }): React.ReactElement {
@@ -1246,6 +1355,14 @@ function LeftSidebar({
           <div style={{ marginTop: 4, fontSize: 10, color: C.accentR, maxHeight: 36, overflow: 'auto' }}>{videoError}</div>
         )}
       </div>
+
+      <CharacterAssignmentPanel
+        characters={assignmentCharacters}
+        selectedLineCount={selectedLineCount}
+        activeCharacterName={activeAssignmentCharacter}
+        onAssignCharacter={onAssignCharacter}
+        onClearAssignment={onClearCharacterAssignment}
+      />
 
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
         <button style={BASE_BTN} onClick={onOpenApi}>API</button>
@@ -3651,6 +3768,7 @@ export default function App(): React.ReactElement {
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
   const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(() => loadActiveDiskProject())
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
+  const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
   const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(() => !loadActiveDiskProject())
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
@@ -3823,6 +3941,23 @@ export default function App(): React.ReactElement {
   }, [])
 
   const selectedRow = rowsData.find(row => row.id === selectedId)
+  const assignmentCharacters = useMemo<CharacterAssignmentSidebarItem[]>(() => {
+    const deduped = new Map<string, CharacterAssignmentSidebarItem>()
+    styleSettings.characters.forEach(character => {
+      const name = character.name.trim()
+      if (!name) return
+      const key = normalizeCharacterName(name)
+      if (!key || deduped.has(key)) return
+      deduped.set(key, {
+        id: character.id,
+        name,
+        gender: character.gender,
+        role: character.anilistRole,
+        avatarColor: character.avatarColor,
+      })
+    })
+    return [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl', { sensitivity: 'base' }))
+  }, [styleSettings.characters])
   const activeSeriesMeta = useMemo(
     () => seriesProjects.find(project => project.id === currentProjectId) ?? null,
     [seriesProjects, currentProjectId],
@@ -4313,6 +4448,50 @@ export default function App(): React.ReactElement {
   const appendTranslationLog = (message: string): void => {
     const stamp = new Date().toLocaleTimeString()
     setTranslationLogs(prev => [`[${stamp}] ${message}`, ...prev].slice(0, 20))
+  }
+
+  const applyCharacterToSelectedLines = (characterName: string): void => {
+    const normalizedCharacterName = characterName.trim()
+    if (!normalizedCharacterName) return
+    if (selectedLineIds.size === 0) {
+      appendTranslationLog('Brak zaznaczonych linii do przypisania postaci.')
+      return
+    }
+    setRowsData(prev => {
+      const nextRows = prev.map(row => (
+        selectedLineIds.has(row.id)
+          ? { ...row, character: normalizedCharacterName }
+          : row
+      ))
+      const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
+        resolveCharacterForLineName(rawCharacter, styleSettings.characters)?.name ?? rawCharacter
+      ))
+      setProjectLineAssignments(nextAssignments)
+      return nextRows
+    })
+    setActiveAssignmentCharacter(normalizedCharacterName)
+    appendTranslationLog(`Przypisano postac "${normalizedCharacterName}" do ${selectedLineIds.size} linii.`)
+  }
+
+  const clearCharacterFromSelectedLines = (): void => {
+    if (selectedLineIds.size === 0) {
+      appendTranslationLog('Brak zaznaczonych linii do wyczyszczenia postaci.')
+      return
+    }
+    setRowsData(prev => {
+      const nextRows = prev.map(row => (
+        selectedLineIds.has(row.id)
+          ? { ...row, character: '' }
+          : row
+      ))
+      const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
+        resolveCharacterForLineName(rawCharacter, styleSettings.characters)?.name ?? rawCharacter
+      ))
+      setProjectLineAssignments(nextAssignments)
+      return nextRows
+    })
+    setActiveAssignmentCharacter('')
+    appendTranslationLog(`Wyczyszczono przypisanie postaci dla ${selectedLineIds.size} linii.`)
   }
 
   const resolveMemoryTranslation = (row: DialogRow): string | null => {
@@ -5930,6 +6109,11 @@ export default function App(): React.ReactElement {
           onSelectProjectId={setProjectPickerId}
           onOpenProjectStep={() => setProjectStepOpen(true)}
           onLoadProject={() => { void handleLoadDiskProjectFromButton() }}
+          assignmentCharacters={assignmentCharacters}
+          selectedLineCount={selectedLineIds.size}
+          activeAssignmentCharacter={activeAssignmentCharacter}
+          onAssignCharacter={applyCharacterToSelectedLines}
+          onClearCharacterAssignment={clearCharacterFromSelectedLines}
           activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
           loadedFileName={loadedFileName}
         />

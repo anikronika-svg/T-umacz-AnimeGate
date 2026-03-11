@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.17`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.18`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -610,3 +610,23 @@
   - dodano wspolny handler `openDiskProjectByDirectory(...)`, aby uniknac rozjazdu logiki miedzy:
     - otwarciem z modalu Kroku 0,
     - otwarciem z przycisku `Wczytaj`.
+
+## 30) Polautomatyczne przypisywanie postaci do linii z lewego panelu (v1.0.18)
+- Dodano nowy panel w lewym sidebarze: `Postacie do przypisywania`.
+  - umiejscowienie: pod podgladem wideo,
+  - lista scrollowalna,
+  - zrodlo danych: postacie aktywnego projektu (`styleSettings.characters`),
+  - deduplikacja po znormalizowanej nazwie postaci.
+- Zakres akcji panelu:
+  - klik postaci -> przypisanie do wszystkich aktualnie zaznaczonych linii,
+  - pozycja `Brak postaci` -> czyszczenie przypisania dla zaznaczonych linii,
+  - pokazywana liczba zaznaczonych linii,
+  - podswietlenie ostatnio przypisanej postaci (szybka praca seryjna).
+- Integracja z tabela dialogow:
+  - kolumna `Postac` aktualizuje sie natychmiast po kliknieciu w panelu.
+- Trwalosc danych:
+  - przypisania trafiaja do `rowsData` i do `lineCharacterAssignments` (stan projektu),
+  - autozapis projektu zapisuje je do `animegate-project.json`,
+  - po ponownym otwarciu projektu i pliku ASS przypisania sa przywracane przez `applyProjectLineAssignments`.
+- Architektura:
+  - wydzielono komponent `CharacterAssignmentPanel` w `src/App.tsx` (bez ingerencji w pipeline tlumaczenia, parser ASS, waveform, updater i IPC).
