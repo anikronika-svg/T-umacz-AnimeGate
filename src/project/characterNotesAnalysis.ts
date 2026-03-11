@@ -13,6 +13,13 @@ interface ArchetypeCandidateRule {
   antiKeywords?: KeywordRule[]
 }
 
+interface PhraseBoostRule {
+  typeId: string
+  subtypeId: string
+  requiresAll: string[]
+  boost: number
+}
+
 export interface CharacterNotesAnalysisResult {
   suggestedTypeId: string
   suggestedSubtypeId: string
@@ -39,8 +46,18 @@ function normalizeForMatch(value: string): string {
 function firstSentence(value: string): string {
   const clean = compact(value)
   if (!clean) return ''
+  const sentenceParts = clean
+    .split(/[.!?]+/)
+    .map(part => compact(part))
+    .filter(Boolean)
+  if (sentenceParts.length > 0) {
+    if (sentenceParts[0].length >= 16) return `${sentenceParts[0]}.`
+    if (sentenceParts.length > 1) {
+      return `${sentenceParts[0]}. ${sentenceParts[1]}.`
+    }
+  }
   const sentenceEnd = clean.search(/[.!?](\s|$)/)
-  if (sentenceEnd >= 16) return clean.slice(0, sentenceEnd + 1).trim()
+  if (sentenceEnd >= 8) return clean.slice(0, sentenceEnd + 1).trim()
   if (clean.length <= 180) return clean
   return `${clean.slice(0, 180).trim()}...`
 }
@@ -70,24 +87,65 @@ const ARCHETYPE_RULES: ArchetypeCandidateRule[] = [
   { typeId: 'arystokratka_dama', subtypeId: 'arogancka', keywords: [{ value: 'arystokrat', weight: 2 }, { value: 'eleganck' }, { value: 'wyniosl' }, { value: 'aroganck', weight: 2 }] },
   { typeId: 'manipulator', subtypeId: 'subtelny', keywords: [{ value: 'manipul' }, { value: 'steruje innymi', weight: 2 }, { value: 'kontroluje relacje', weight: 2 }] },
   { typeId: 'romantyczna', subtypeId: 'delikatna', keywords: [{ value: 'romantyczn', weight: 2 }, { value: 'wrazliw' }, { value: 'delikatn', weight: 2 }, { value: 'czula' }] },
+  { typeId: 'genki', subtypeId: 'energiczna', keywords: [{ value: 'energiczn', weight: 2 }, { value: 'glosn', weight: 2 }, { value: 'zywiolow' }, { value: 'impulsywn' }] },
+  { typeId: 'postac_komediowa', subtypeId: 'przesadzona', keywords: [{ value: 'zart', weight: 2 }, { value: 'komedi', weight: 2 }, { value: 'chaos' }, { value: 'przesad', weight: 2 }] },
+  { typeId: 'mentor', subtypeId: 'spokojny_nauczyciel', keywords: [{ value: 'dojrzal' }, { value: 'spokojna', weight: 2 }, { value: 'lagodn' }, { value: 'wspiera' }] },
 ]
 
+const PHRASE_BOOST_RULES: PhraseBoostRule[] = [
+  { typeId: 'tsundere', subtypeId: 'niesmiala', requiresAll: ['ukrywa uczuc', 'zawstydz'], boost: 3 },
+  { typeId: 'tsundere', subtypeId: 'niesmiala', requiresAll: ['ale', 'zalezy'], boost: 2 },
+  { typeId: 'kuudere', subtypeId: 'chlodna', requiresAll: ['chlodn', 'zdystans'], boost: 3 },
+  { typeId: 'kuudere', subtypeId: 'chlodna', requiresAll: ['ukrywa emoc', 'rzeczow'], boost: 3 },
+  { typeId: 'dandere', subtypeId: 'zakochana', requiresAll: ['niesmial', 'zakochan'], boost: 3 },
+  { typeId: 'dandere', subtypeId: 'zakochana', requiresAll: ['delikatn', 'wahani'], boost: 3 },
+  { typeId: 'wredna_zlosliwa', subtypeId: 'pogardliwa', requiresAll: ['patrzy z gory', 'aroganck'], boost: 3 },
+  { typeId: 'wredna_zlosliwa', subtypeId: 'pogardliwa', requiresAll: ['pogardliw', 'kasliw'], boost: 2 },
+  { typeId: 'genki', subtypeId: 'energiczna', requiresAll: ['energiczn', 'impulsywn'], boost: 2 },
+  { typeId: 'postac_komediowa', subtypeId: 'przesadzona', requiresAll: ['zart', 'chaos'], boost: 3 },
+  { typeId: 'opiekuncza', subtypeId: 'troskliwa', requiresAll: ['opiekuncz', 'troskliw'], boost: 3 },
+  { typeId: 'opiekuncza', subtypeId: 'ciepla_opiekunka', requiresAll: ['ciepla', 'lagodn'], boost: 2 },
+]
+
+function buildCandidateKey(typeId: string, subtypeId: string): string {
+  return `${typeId}:${subtypeId}`
+}
+
 function inferCharacterTypeFromNotes(normalizedNotes: string): { typeId: string; subtypeId: string } {
-  let best: { typeId: string; subtypeId: string; score: number } = { typeId: '', subtypeId: '', score: 0 }
+  const scoreByCandidate = new Map<string, { typeId: string; subtypeId: string; score: number }>()
+
+  const upsertScore = (typeId: string, subtypeId: string, delta: number): void => {
+    const key = buildCandidateKey(typeId, subtypeId)
+    const current = scoreByCandidate.get(key) ?? { typeId, subtypeId, score: 0 }
+    current.score += delta
+    scoreByCandidate.set(key, current)
+  }
+
   ARCHETYPE_RULES.forEach(rule => {
     const positive = countKeywordScore(normalizedNotes, rule.keywords)
     const negative = countKeywordScore(normalizedNotes, rule.antiKeywords ?? [])
     const score = Math.max(0, positive - negative)
-    if (score > best.score) {
-      best = { typeId: rule.typeId, subtypeId: rule.subtypeId, score }
+    if (score > 0) upsertScore(rule.typeId, rule.subtypeId, score)
+  })
+
+  PHRASE_BOOST_RULES.forEach(rule => {
+    const matched = rule.requiresAll.every(fragment => normalizedNotes.includes(fragment))
+    if (matched) {
+      upsertScore(rule.typeId, rule.subtypeId, rule.boost)
     }
   })
+
+  let best: { typeId: string; subtypeId: string; score: number } = { typeId: '', subtypeId: '', score: 0 }
+  scoreByCandidate.forEach(candidate => {
+    if (candidate.score > best.score) best = candidate
+  })
+
   if (best.score < 2) return { typeId: '', subtypeId: '' }
   return { typeId: best.typeId, subtypeId: best.subtypeId }
 }
 
 function inferNotesHints(normalizedNotes: string, originalNotes: string): Omit<CharacterNotesAnalysisResult, 'suggestedTypeId' | 'suggestedSubtypeId'> {
-  const formal = /formaln|uprzejm|grzeczn|arystokrat|dystans/.test(normalizedNotes)
+  const formal = /formaln|uprzejm|grzeczn|arystokrat/.test(normalizedNotes)
   const casual = /luzn|potoczn|swobodn|slang/.test(normalizedNotes)
   const cold = /chlodn|zimn|zdystans|powosciagliw|rzeczow/.test(normalizedNotes)
   const warm = /ciepl|lagodn|opiekuncz|troskliw|serdeczn/.test(normalizedNotes)
@@ -95,6 +153,10 @@ function inferNotesHints(normalizedNotes: string, originalNotes: string): Omit<C
   const aggressive = /agresywn|ostra|wredn|cham|pogardliw|drazliw|wybuchow/.test(normalizedNotes)
   const ironic = /ironicz|sarkazm|kasliw|zlosliw/.test(normalizedNotes)
   const emotional = /emocjonal|uczuciow|zakochan|wrazliw/.test(normalizedNotes)
+  const energetic = /energiczn|zywiolow|impulsywn|glosn|dynamiczn/.test(normalizedNotes)
+  const comedic = /zart|komedi|chaos|zabaw|humor/.test(normalizedNotes)
+  const mature = /dojrzal|opanowan|stateczn/.test(normalizedNotes)
+  const soft = /delikatn|miekko|cicho|wahani/.test(normalizedNotes)
 
   const speakingTraits = [
     cold ? 'chłodna i bardziej zdystansowana wypowiedź' : '',
@@ -103,6 +165,9 @@ function inferNotesHints(normalizedNotes: string, originalNotes: string): Omit<C
     aggressive ? 'ostrzejsze i bardziej drażliwe reakcje' : '',
     ironic ? 'ironiczne, kąśliwe podteksty' : '',
     emotional ? 'większa emocjonalność w kluczowych momentach' : '',
+    energetic ? 'żywe, dynamiczne tempo wypowiedzi' : '',
+    comedic ? 'żartobliwy, komediowy sposób reakcji' : '',
+    soft ? 'łagodny, subtelny sposób mówienia' : '',
   ].filter(Boolean).join(', ')
 
   const mannerOfAddress = formal
@@ -111,9 +176,17 @@ function inferNotesHints(normalizedNotes: string, originalNotes: string): Omit<C
       ? 'Stosuje bardziej bezpośrednie, swobodne zwroty.'
       : cold
         ? 'Zwraca się chłodno i rzeczowo.'
+        : warm
+          ? 'Zwraca się łagodnie i opiekuńczo.'
         : ''
 
-  const politenessLevel = formal ? 'Wysoki' : casual || aggressive ? 'Niski' : ''
+  const politenessLevel = formal
+    ? 'Wysoki'
+    : casual || aggressive || energetic
+      ? 'Niski'
+      : warm || mature
+        ? 'Średni'
+        : ''
   const vocabularyType = formal
     ? 'Bardziej formalne i uporządkowane słownictwo.'
     : casual
@@ -122,14 +195,18 @@ function inferNotesHints(normalizedNotes: string, originalNotes: string): Omit<C
         ? 'Oszczędne, rzeczowe słownictwo.'
         : aggressive
           ? 'Bardziej ostre i cięte słownictwo.'
+          : comedic
+            ? 'Bardziej potoczne, żartobliwe słownictwo.'
           : ''
   const temperament = aggressive
     ? 'Drażliwy / impulsywny'
+    : energetic
+      ? 'Żywiołowy / ekspresyjny'
     : cold
       ? 'Powściągliwy / chłodny'
       : shy
         ? 'Niepewny / wycofany'
-        : warm
+        : warm || mature
           ? 'Łagodny / opiekuńczy'
           : ''
   const shortSummary = firstSentence(originalNotes)
@@ -177,10 +254,10 @@ export function mergeCharacterNotesAnalysisIntoProfile(
   const nextNotes = notes.trim()
   const analysis = analyzeCharacterNotes(nextNotes)
   const legacyType = mapLegacyArchetypeToCharacterType(profile.archetype)
-  const hasNonLegacyType = Boolean(profile.characterTypeId)
+  const hasCustomTypeSelection = Boolean(profile.characterTypeId)
     && (profile.characterTypeId !== legacyType.typeId || profile.characterSubtypeId !== legacyType.subtypeId)
 
-  const shouldApplySuggestedType = !hasNonLegacyType && Boolean(analysis.suggestedTypeId)
+  const shouldApplySuggestedType = !hasCustomTypeSelection && Boolean(analysis.suggestedTypeId)
 
   return {
     ...profile,

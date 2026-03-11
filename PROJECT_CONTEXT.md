@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.15`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.16`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -553,3 +553,34 @@
     - prompt tlumaczenia dostaje notatki + efekt uzupelnionego profilu.
   - `src/project/characterUserNotesProfile.ts`:
     - uproszczony wrapper zgodny wstecznie, delegujacy do nowego modulu analizy.
+
+## 28) Etap jakosciowy: test i dopracowanie mapowania notatek (v1.0.16)
+- Cel:
+  - podniesienie jakosci mapowania `notatki uzytkownika -> profil postaci -> styl tlumaczenia`.
+- Wdrozone usprawnienia heurystyk:
+  - rozszerzono reguly o brakujace typy/scenariusze:
+    - `genki / energiczna`
+    - `postac_komediowa / przesadzona`
+    - `mentor / spokojny_nauczyciel`
+  - dodano reguly `phrase boost` (kombinacje slow) dla trafniejszego wyboru typu/podtypu, m.in.:
+    - `niesmiala + zakochana`
+    - `chlodna + zdystansowana`
+    - `patrzy z gory + arogancka`
+    - `zart + chaos`
+    - `opiekuncza + troskliwa`
+  - poprawiono inferencje cech mowy:
+    - dodane sygnaly `energetyczna`, `komediowa`, `subtelna/miekka mowa`,
+    - lepsze mapowanie `temperament`, `vocabularyType`, `mannerOfAddress`.
+  - skorygowano formalnosc:
+    - sam `dystans` nie podbija juz automatycznie formalnosci do wysokiej.
+  - poprawiono skrot `characterNote`:
+    - przy bardzo krotkiej pierwszej frazie laczy pierwsze dwa zdania (bardziej uzyteczny opis).
+- Testy:
+  - dodano testy jednostkowe:
+    - `src/project/characterNotesAnalysis.spec.ts`
+    - 5 scenariuszy charakterologicznych + test ochrony recznych pol Kroku 3.
+  - wynik: wszystkie testy przechodza (`13/13`).
+- Wynik jakosciowy:
+  - notatki sa lepiej rozrozniane na profile:
+    - niesmiala/zakochana vs chlodna/zdystansowana vs wredna/arogancka vs energiczna/komediowa vs opiekuncza/spokojna.
+  - poprawiono rozroznialnosc stylu w promptach tlumaczenia per postac.
