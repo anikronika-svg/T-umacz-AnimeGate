@@ -361,3 +361,22 @@
 - Zakres celowo ograniczony:
   - bez ciezkiej przebudowy UI Kroku 2/3 na tym etapie,
   - fundament danych gotowy pod kolejny etap automatycznej analizy AniList.
+
+## 21) Bugfix UX Krok 1: czysty stan sesji po otwarciu (v1.0.9)
+- Problem:
+  - prawa lista Kroku 1 (`workerCast`) byla automatycznie wypelniana przy otwarciu modalu na podstawie danych projektu (`settings.characters`), mimo braku wyszukania AniList w biezacej sesji.
+- Root cause:
+  - w `CharacterModal` podczas init (`open && !wasOpenRef.current`) wykonywano:
+    - `setWorkerCast(normalizeDraftCharacters(settings.characters).map(...))`
+  - to mieszalo dane trwale projektu z sesyjnym stanem roboczym Kroku 1.
+- Naprawa:
+  - Krok 1 startuje zawsze czysto:
+    - `setSelectedAnime(null)`
+    - `setSelectedAnimeCast([])`
+    - `setWorkerCast([])`
+  - dane trwale projektu pozostaja w `draft/settings` i sa dalej zapisywane/odczytywane, ale nie zasilaja automatycznie listy roboczej Kroku 1.
+- Efekt:
+  - po otwarciu Kroku 1 bez wyszukania:
+    - pole wyszukiwania puste,
+    - lewa lista pusta,
+    - prawa lista pusta.

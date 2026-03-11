@@ -2580,41 +2580,14 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
 
   const normalizeDraftCharacters = (list: CharacterStyleAssignment[]): CharacterStyleAssignment[] => dedupeAssignments(list)
 
-  const mapDraftCharacterToWorkerCast = (character: CharacterStyleAssignment): AniListCharacter => ({
-    id: Number.isFinite(character.anilistCharacterId) ? (character.anilistCharacterId as number) : numericIdFromName(character.name),
-    name: character.name,
-    gender: character.gender,
-    avatarColor: character.avatarColor,
-    roleLabel: (character.anilistRole as AniListCharacter['roleLabel']) ?? 'Unknown',
-    imageUrl: null,
-    description: character.profile.anilistDescription || '',
-    descriptionShort: character.profile.characterNote || '',
-    personalityTraits: character.profile.speakingTraits
-      .split(',')
-      .map(item => item.trim())
-      .filter(Boolean)
-      .slice(0, 8),
-    inferredArchetype: character.profile.archetype,
-    inferredStyle: character.style,
-    inferredMannerOfAddress: character.profile.mannerOfAddress,
-    inferredPolitenessLevel: character.profile.politenessLevel,
-    inferredVocabularyType: character.profile.vocabularyType,
-    inferredTemperament: character.profile.temperament,
-  })
-
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setStep('step1')
       setDraft({ ...settings, characters: normalizeDraftCharacters(settings.characters) })
       setSearch('')
       setSearchResults([])
-      setSelectedAnime(projectMeta?.anilistId
-        ? {
-          id: projectMeta.anilistId,
-          title: projectMeta.title || settings.projectId,
-          seasonLabel: 'z projektu',
-        }
-        : null)
+      // Step 1 is a session workspace: always start clean until user performs a search.
+      setSelectedAnime(null)
       setSelectedAnimeCast([])
       setIsSearching(false)
       setIsLoadingCast(false)
@@ -2629,8 +2602,9 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       } catch {
         setImageCacheByName({})
       }
-      // Krok 1 przy odtwarzaniu projektu startuje z zapisaną bazą roboczą postaci.
-      setWorkerCast(normalizeDraftCharacters(settings.characters).map(mapDraftCharacterToWorkerCast))
+      // Keep persisted project data in draft/settings only.
+      // Worker cast on Step 1 is a temporary session state and starts empty.
+      setWorkerCast([])
     }
     wasOpenRef.current = open
   }, [open, settings, rows, projectMeta])
