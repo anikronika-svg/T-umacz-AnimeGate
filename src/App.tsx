@@ -50,7 +50,7 @@ import {
   CharacterAssignmentGrid,
   type CharacterAssignmentGridItem,
 } from './components/CharacterAssignmentGrid'
-import { VideoSubtitleOverlay } from './components/VideoSubtitleOverlay'
+import { FloatingVideoPreview } from './components/FloatingVideoPreview'
 
 const C = {
   bg0: '#1e1e2e',
@@ -6183,36 +6183,15 @@ export default function App(): React.ReactElement {
         </div>
       </div>
 
-      {isExpandedVideoOpen && videoSrc && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(7,10,16,0.88)', zIndex: 1400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }}
-          onClick={() => setExpandedVideoOpen(false)}
-        >
-          <div
-            style={{ width: 'min(1500px, 96vw)', height: 'min(860px, 92vh)', border: `1px solid ${C.border}`, borderRadius: 10, background: '#10131d', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-            onClick={event => event.stopPropagation()}
-          >
-            <div style={{ height: 34, borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 10px', background: '#171a24' }}>
-              <div style={{ fontSize: 12, color: C.textDim }}>
-                Powiekszony podglad sceny • Spacja: play/pause • Klik linii: skok do sceny
-              </div>
-              <button style={BASE_BTN} onClick={() => setExpandedVideoOpen(false)}>Zamknij</button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, position: 'relative', background: '#000' }}>
-              <video
-                ref={expandedVideoRef}
-                src={videoSrc}
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
-                onClick={() => handleVideoPlayPause()}
-              />
-              <VideoSubtitleOverlay
-                sourceText={stripAssFormatting(selectedRow?.sourceRaw ?? selectedRow?.source ?? '').trim()}
-                targetText={stripAssFormatting(selectedRow?.target ?? '').trim()}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      <FloatingVideoPreview
+        open={isExpandedVideoOpen}
+        videoRef={expandedVideoRef}
+        videoSrc={videoSrc}
+        sourceText={stripAssFormatting(selectedRow?.sourceRaw ?? selectedRow?.source ?? '').trim()}
+        targetText={stripAssFormatting(selectedRow?.target ?? '').trim()}
+        onClose={() => setExpandedVideoOpen(false)}
+        onTogglePlayPause={handleVideoPlayPause}
+      />
 
       <ApiModal
         open={isApiOpen}

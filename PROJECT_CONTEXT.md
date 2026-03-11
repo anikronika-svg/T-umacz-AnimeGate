@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.21`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.22`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -693,3 +693,22 @@
 - Spacja = play/pause:
   - utrzymano globalny skrót play/pause poza polami tekstowymi,
   - wpisywanie spacji w polach edycji pozostaje bez zmian (guard dla input/textarea/contentEditable).
+
+## 34) Pływające okno podglądu sceny: drag + resize (v1.0.22)
+- Naprawiono problem sztywnego, centralnego modala podglądu sceny:
+  - powiększony podgląd działa teraz jako pływające okno robocze.
+- Dodano nowy komponent:
+  - `src/components/FloatingVideoPreview.tsx`
+  - odpowiedzialny za:
+    - przeciąganie okna za pasek nagłówka,
+    - zmianę rozmiaru z prawego dolnego rogu,
+    - ograniczenie pozycji/rozmiaru do viewportu aplikacji,
+    - zachowanie ostatniej pozycji i rozmiaru w bieżącej sesji (`sessionStorage`).
+- Integracja z istniejącym playerem:
+  - zachowano dotychczasową logikę synchronizacji czasu z głównym playerem,
+  - overlay napisów nadal działa:
+    - oryginał u góry,
+    - polski na dole.
+- Zachowanie funkcjonalne bez regresji:
+  - spacja nadal steruje play/pause (poza polami tekstowymi),
+  - klik linii nadal wykonuje seek do sceny i utrzymuje synchronizację.
