@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.22`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.23`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -712,3 +712,19 @@
 - Zachowanie funkcjonalne bez regresji:
   - spacja nadal steruje play/pause (poza polami tekstowymi),
   - klik linii nadal wykonuje seek do sceny i utrzymuje synchronizację.
+
+## 35) Fix krytyczny: `Wczytaj` istniejącego projektu nie nadpisuje stanu z dysku (v1.0.23)
+- Zdiagnozowana przyczyna:
+  - po `openProject -> hydrateFromDiskProject(...)` następował wtórny hydration z katalogu projektu (`seriesProjects`) i localStorage, który mógł nadpisać świeżo odczytany stan z `animegate-project.json`.
+- Naprawa:
+  - dodano jawny guard dla ścieżki hydracji z dysku:
+    - `pendingDiskHydrationProjectIdRef`,
+    - ustawiany w `hydrateFromDiskProject` razem z `hydratedProjectIdRef` przed zmianą `currentProjectId`,
+    - efekt hydracji katalogowej pomija jednorazowo nadpisanie dla właśnie wczytanego projektu z folderu.
+- Efekt:
+  - `Wczytaj` po wskazaniu folderu utrzymuje dane z pliku projektu jako źródło prawdy (bez regresyjnego overwrite).
+  - poprawnie przywracane są:
+    - aktywny projekt i metadane,
+    - ustawienia tłumaczenia (`sourceLang`, `targetLang`, `preferredModelId`),
+    - `styleSettings` (profile postaci, notatki, typ/podtyp, ustawienia kroków 2/3),
+    - `lineCharacterAssignments` dla dalszego mapowania linii.

@@ -3733,6 +3733,7 @@ export default function App(): React.ReactElement {
   const lastLineSyncFromVideoRef = useRef<number | null>(null)
   const pauseAtAfterLineRef = useRef<number | null>(null)
   const hydratedProjectIdRef = useRef<string | null>(null)
+  const pendingDiskHydrationProjectIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     saveActiveDiskProject(activeDiskProject)
@@ -3759,7 +3760,8 @@ export default function App(): React.ReactElement {
     if (!active) return
 
     const isFirstHydrationForProject = hydratedProjectIdRef.current !== currentProjectId
-    if (isFirstHydrationForProject) {
+    const shouldSkipCatalogHydration = pendingDiskHydrationProjectIdRef.current === currentProjectId
+    if (isFirstHydrationForProject && !shouldSkipCatalogHydration) {
       setSourceLang(active.sourceLang || 'en')
       setTargetLang(active.targetLang || 'pl')
       setSelectedModelId(active.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID)
@@ -3773,6 +3775,9 @@ export default function App(): React.ReactElement {
       setPreRollSec(videoCfg.preRollSec)
       setPostRollSec(videoCfg.postRollSec)
       hydratedProjectIdRef.current = currentProjectId
+    }
+    if (shouldSkipCatalogHydration) {
+      pendingDiskHydrationProjectIdRef.current = null
     }
 
     setMemoryStore(prev => {
@@ -4317,6 +4322,9 @@ export default function App(): React.ReactElement {
         lineKey: item.lineKey,
       })),
     )
+    // Prevent a follow-up catalog/localStorage hydration from overwriting freshly loaded disk state.
+    hydratedProjectIdRef.current = projectId
+    pendingDiskHydrationProjectIdRef.current = projectId
     setCurrentProjectId(projectId)
     setProjectPickerId(projectId)
     setActiveDiskProject({
