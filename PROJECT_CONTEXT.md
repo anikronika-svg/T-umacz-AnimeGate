@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.19`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.20`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -654,3 +654,21 @@
   - brak auto-przypisania bez akcji uzytkownika,
   - po akcji uzytkownika kolumna `Postac` aktualizuje sie natychmiast,
   - przypisania dalej zapisuja sie do projektu przez istniejacy autozapis (`lineCharacterAssignments`).
+
+## 32) Panel postaci: siatka 4-kolumnowa z obrazkami (v1.0.20)
+- Przebudowano panel `Postacie do przypisywania` z listy pionowej do siatki kart:
+  - 4 kolumny,
+  - pionowy scroll dla wiekszej liczby postaci,
+  - karta postaci: obrazek/avatara + imie + drobny opis (plec/rola).
+- Dodano wydzielony komponent UI:
+  - `src/components/CharacterAssignmentGrid.tsx`
+  - odpowiedzialny za render kart, hover/active state i sekcje sugestii.
+- Integracja danych obrazkow:
+  - panel korzysta z lokalnego cache obrazkow postaci per projekt (`charImageCacheKey(projectId)`),
+  - mapowanie po znormalizowanej nazwie postaci.
+- Fallback obrazu:
+  - gdy brak URL lub obraz sie nie laduje -> karta pokazuje placeholder z inicjalem postaci na tle `avatarColor`.
+- Logika przypisywania bez zmian:
+  - klik karty nadal przypisuje postac do zaznaczonej linii lub wielu linii,
+  - `Brak postaci` nadal czyści przypisanie,
+  - zapis projektu i autozapis pozostaja zgodne z obecnym flow.

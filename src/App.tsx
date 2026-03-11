@@ -46,6 +46,10 @@ import {
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import { CharacterNotesModal } from './components/CharacterNotesModal'
+import {
+  CharacterAssignmentGrid,
+  type CharacterAssignmentGridItem,
+} from './components/CharacterAssignmentGrid'
 
 const C = {
   bg0: '#1e1e2e',
@@ -1176,135 +1180,6 @@ function ActionBar({
   )
 }
 
-interface CharacterAssignmentSidebarItem {
-  id: number
-  name: string
-  gender: CharacterGender
-  role?: string
-  avatarColor: string
-}
-
-function CharacterAssignmentPanel({
-  characters,
-  selectedLineCount,
-  activeCharacterName,
-  suggestions,
-  onAssignCharacter,
-  onClearAssignment,
-}: {
-  characters: CharacterAssignmentSidebarItem[]
-  selectedLineCount: number
-  activeCharacterName: string
-  suggestions: CharacterAssignmentSuggestion[]
-  onAssignCharacter: (characterName: string) => void
-  onClearAssignment: () => void
-}): React.ReactElement {
-  return (
-    <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <div style={{ fontSize: 12, color: C.accent, fontWeight: 700 }}>Postacie do przypisywania</div>
-        <div style={{ fontSize: 10, color: C.textDim }}>Zaznaczone: {selectedLineCount}</div>
-      </div>
-      <button
-        style={{
-          ...BASE_BTN,
-          marginBottom: 6,
-          width: '100%',
-          background: activeCharacterName ? C.surface : '#284267',
-          borderColor: activeCharacterName ? C.border : '#3f7ed2',
-          color: activeCharacterName ? C.textDim : '#fff',
-        }}
-        onClick={onClearAssignment}
-      >
-        Brak postaci
-      </button>
-      <div style={{ maxHeight: 230, overflowY: 'auto', border: `1px solid ${C.borderB}`, background: '#171925' }}>
-        {characters.map(character => {
-          const isActive = activeCharacterName === character.name
-          return (
-            <button
-              key={character.id}
-              style={{
-                width: '100%',
-                display: 'grid',
-                gridTemplateColumns: '24px 1fr',
-                gap: 8,
-                alignItems: 'center',
-                border: 'none',
-                borderBottom: `1px solid ${C.borderB}`,
-                background: isActive ? '#2b3552' : 'transparent',
-                color: C.text,
-                padding: '6px 8px',
-                textAlign: 'left',
-                cursor: 'pointer',
-              }}
-              onClick={() => onAssignCharacter(character.name)}
-            >
-              <span
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  background: character.avatarColor || '#4f8ad6',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: '#fff',
-                }}
-              >
-                {(character.name.trim().slice(0, 1) || '?').toUpperCase()}
-              </span>
-              <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 12, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {character.name}
-                </span>
-                <span style={{ display: 'block', fontSize: 10, color: C.textDim, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {genderLabel(character.gender)}{character.role ? ` • ${character.role}` : ''}
-                </span>
-              </span>
-            </button>
-          )
-        })}
-        {characters.length === 0 && (
-          <div style={{ padding: 10, fontSize: 11, color: C.textDim }}>
-            Brak postaci w aktywnym projekcie. Dodaj je w Kroku 1 (Postacie).
-          </div>
-        )}
-      </div>
-      <div style={{ marginTop: 8, border: `1px solid ${C.borderB}`, background: '#171b28', padding: 6 }}>
-        <div style={{ fontSize: 11, color: C.accent, fontWeight: 700, marginBottom: 4 }}>Sugestie (1/2/3)</div>
-        <div style={{ display: 'grid', gap: 4 }}>
-          {suggestions.map((suggestion, index) => (
-            <button
-              key={`${suggestion.name}-${index}`}
-              style={{
-                ...BASE_BTN,
-                width: '100%',
-                height: 24,
-                justifyContent: 'space-between',
-                background: '#243048',
-                borderColor: '#365176',
-              }}
-              onClick={() => onAssignCharacter(suggestion.name)}
-              title={suggestion.reasons.join(' | ')}
-            >
-              <span>{index + 1}. {suggestion.name}</span>
-              <span style={{ fontSize: 10, color: C.textDim }}>{suggestion.score}</span>
-            </button>
-          ))}
-          {suggestions.length === 0 && (
-            <div style={{ fontSize: 10, color: C.textDim, padding: '2px 4px' }}>
-              Brak sugestii dla tej linii.
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function LeftSidebar({
   onOpenApi,
   onOpenCharacters,
@@ -1353,7 +1228,7 @@ function LeftSidebar({
   onSelectProjectId: (projectId: string) => void
   onOpenProjectStep: () => void
   onLoadProject: () => void
-  assignmentCharacters: CharacterAssignmentSidebarItem[]
+  assignmentCharacters: CharacterAssignmentGridItem[]
   selectedLineCount: number
   activeAssignmentCharacter: string
   assignmentSuggestions: CharacterAssignmentSuggestion[]
@@ -1392,7 +1267,7 @@ function LeftSidebar({
         )}
       </div>
 
-      <CharacterAssignmentPanel
+      <CharacterAssignmentGrid
         characters={assignmentCharacters}
         selectedLineCount={selectedLineCount}
         activeCharacterName={activeAssignmentCharacter}
@@ -3807,6 +3682,7 @@ export default function App(): React.ReactElement {
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
   const [recentCharacterHistory, setRecentCharacterHistory] = useState<string[]>([])
+  const [assignmentImageCacheByName, setAssignmentImageCacheByName] = useState<Record<string, string>>({})
   const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(() => !loadActiveDiskProject())
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
@@ -3978,9 +3854,19 @@ export default function App(): React.ReactElement {
     }
   }, [])
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(charImageCacheKey(currentProjectId))
+      const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+      setAssignmentImageCacheByName(parsed)
+    } catch {
+      setAssignmentImageCacheByName({})
+    }
+  }, [currentProjectId, styleSettings.updatedAt])
+
   const selectedRow = rowsData.find(row => row.id === selectedId)
-  const assignmentCharacters = useMemo<CharacterAssignmentSidebarItem[]>(() => {
-    const deduped = new Map<string, CharacterAssignmentSidebarItem>()
+  const assignmentCharacters = useMemo<CharacterAssignmentGridItem[]>(() => {
+    const deduped = new Map<string, CharacterAssignmentGridItem>()
     styleSettings.characters.forEach(character => {
       const name = character.name.trim()
       if (!name) return
@@ -3992,10 +3878,11 @@ export default function App(): React.ReactElement {
         gender: character.gender,
         role: character.anilistRole,
         avatarColor: character.avatarColor,
+        imageUrl: assignmentImageCacheByName[key] || null,
       })
     })
     return [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl', { sensitivity: 'base' }))
-  }, [styleSettings.characters])
+  }, [styleSettings.characters, assignmentImageCacheByName])
   const assignmentSuggestions = useMemo<CharacterAssignmentSuggestion[]>(() => {
     return buildCharacterAssignmentSuggestions({
       rows: rowsData,
