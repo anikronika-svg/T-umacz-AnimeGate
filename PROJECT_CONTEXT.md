@@ -3,6 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
+- Aktualna wersja aplikacji (`package.json`): `1.0.1`.
 - Ostatnie commity:
   - `35138bf` – foundation auto-update (electron-updater + publish config + release:win)
   - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
@@ -98,6 +99,11 @@
   - `artifactName`: `AnimeGate-Translator-Setup.exe`
   - NSIS: `perMachine=true`, `oneClick=false`, skroty Desktop + Start Menu.
   - publish: `github` (`owner=anikronika-svg`, `repo=T-umacz-AnimeGate`, `releaseType=release`).
+- Workflow release:
+  - `.github/workflows/release.yml`
+  - trigger: push tagu `v*` (np. `v1.0.1`)
+  - walidacja: tag musi odpowiadać `package.json.version`
+  - publikacja: `npm run release:win` z `GH_TOKEN=${{ secrets.GITHUB_TOKEN }}`
 - Wygenerowany instalator:
   - `C:\Users\Adrian\Desktop\Tlumacz AnimeGate\release\AnimeGate-Translator-Setup.exe`
 
@@ -154,8 +160,16 @@
 - Nadal NIE jest wdrozone:
   - IPC/preload kanały updatera,
   - UI statusu aktualizacji,
-  - workflow `.github/workflows/release.yml`.
+  - komendy użytkownika check/download/install z renderer.
 - Uwaga dot. repo prywatnego:
   - visibility repo nie zostala potwierdzona narzedziowo w tym srodowisku (brak `gh`, brak dostepu do GitHub API),
   - jezeli repo jest prywatne, klient auto-update bedzie wymagal dostepu do release assets (token/pośrednia dystrybucja), co wpływa na bezpieczenstwo i UX.
-- Następny krok: dodać IPC/preload API dla updatera (status + komendy), nadal bez zmian UI.
+- Następny krok: dodać IPC/preload API dla updatera (status + komendy), nadal minimalny wpływ na UI.
+
+## 10) Wersjonowanie i release policy
+- Każda większa zmiana funkcjonalna:
+  1) bump wersji (`npm version <new> --no-git-tag-version`)
+  2) commit + push
+  3) tag `vX.Y.Z` + push tagu
+  4) GitHub Actions publikuje release assets i `latest.yml`
+  5) aktualizacja `PROJECT_CONTEXT.md`
