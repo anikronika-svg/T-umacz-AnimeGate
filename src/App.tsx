@@ -1174,6 +1174,8 @@ function ProjectBar({
   onSelectProjectId,
   onCreateProject,
   onLoadProject,
+  onOpenProjectStep,
+  activeDiskProjectTitle,
 }: {
   loadedFileName: string
   loadedVideoName: string

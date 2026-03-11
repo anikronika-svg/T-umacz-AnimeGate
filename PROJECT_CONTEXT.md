@@ -308,3 +308,13 @@
 - Cel hotfixu:
   - nawet przy krytycznej awarii startu user ma czytelny komunikat i sciezke logu, zamiast blank screena.
   - mozna precyzyjnie ustalic pierwotna przyczyne na produkcji na podstawie logow.
+
+## 18) P0 hotfix: ReferenceError `onOpenProjectStep` (v1.0.6)
+- Potwierdzony root cause:
+  - w `ProjectBar` JSX byl uzyty handler `onOpenProjectStep`, ale ten prop nie byl destrukturyzowany w sygnaturze funkcji komponentu.
+  - efekt: `ReferenceError: onOpenProjectStep is not defined` i crash renderera przy starcie.
+- Naprawa:
+  - dodano brakujace propsy do destrukturyzacji `ProjectBar`:
+    - `onOpenProjectStep`
+    - `activeDiskProjectTitle`
+  - bez zmiany zachowania UI/flow.
