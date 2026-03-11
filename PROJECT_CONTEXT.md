@@ -283,3 +283,28 @@
   - model jest lepiej przygotowany pod kolejne odcinki bez przebudowy UI.
 - Nadal otwarte:
   - brak heurystyki semantycznej (np. fuzzy po tresci dialogu) dla skrajnych przypadkow, gdy timing i styl ulegaja duzym zmianom.
+
+## 17) P0 hotfix: blank screen po auto-update (v1.0.5)
+- Objaw:
+  - po `download + install update` aplikacja startowala z pustym, ciemnym oknem.
+- Ustalenia diagnostyczne:
+  - artefakt pakietu (`app.asar`) zawiera poprawnie:
+    - `dist/index.html`
+    - `dist/assets/*`
+    - `dist-electron/main.js`
+    - `dist-electron/preload.js`
+  - najbardziej prawdopodobny punkt awarii: runtime renderer/preload bez widocznej diagnostyki (cichy crash, brak fallbacku), a nie brak plikow w paczce.
+- Wdrozone zabezpieczenia startowe (production diagnostics):
+  - `electron/main.ts`:
+    - log startupu do pliku (`userData/logs/startup.log`),
+    - logowanie: `did-finish-load`, `did-fail-load`, `preload-error`, `render-process-gone`, `console-message` (warn/error),
+    - globalne handlery: `uncaughtException`, `unhandledRejection`, `unresponsive`,
+    - fallback: diagnostyczny ekran HTML (data URL) przy krytycznym bledzie ladowania.
+  - `src/main.tsx`:
+    - globalne handlery `window.error` i `window.unhandledrejection`,
+    - awaryjny ekran bledu renderera zamiast pustego tla.
+  - `src/StartupErrorBoundary.tsx`:
+    - boundary dla bledow React render lifecycle.
+- Cel hotfixu:
+  - nawet przy krytycznej awarii startu user ma czytelny komunikat i sciezke logu, zamiast blank screena.
+  - mozna precyzyjnie ustalic pierwotna przyczyne na produkcji na podstawie logow.

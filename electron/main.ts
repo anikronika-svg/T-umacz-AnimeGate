@@ -85,6 +85,10 @@ interface CreateProjectArgs {
   initialConfig: Omit<DiskProjectConfigV1, 'projectDir' | 'configPath' | 'createdAt' | 'updatedAt'>
 }
 
+const STARTUP_LOG_FILE = 'startup.log'
+
+type StartupLogLevel = 'INFO' | 'WARN' | 'ERROR'
+
 function getOpenStatePath(): string {
   return path.join(app.getPath('userData'), OPEN_STATE_FILE)
 }
@@ -95,6 +99,87 @@ function getApiConfigPath(): string {
 
 function getWaveformCacheDir(): string {
   return path.join(app.getPath('userData'), 'waveform-cache')
+}
+
+function getStartupLogPath(): string {
+  try {
+    return path.join(app.getPath('userData'), 'logs', STARTUP_LOG_FILE)
+  } catch {
+    return path.join(process.cwd(), STARTUP_LOG_FILE)
+  }
+}
+
+function toLogString(value: unknown): string {
+  if (value instanceof Error) {
+    return `${value.name}: ${value.message}\n${value.stack ?? ''}`.trim()
+  }
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function startupLog(level: StartupLogLevel, message: string, details?: unknown): void {
+  const stamp = new Date().toISOString()
+  const detailsText = details === undefined ? '' : ` | ${toLogString(details)}`
+  const line = `[${stamp}] [${level}] ${message}${detailsText}\n`
+
+  if (level === 'ERROR') {
+    console.error(line.trimEnd())
+  } else if (level === 'WARN') {
+    console.warn(line.trimEnd())
+  } else {
+    console.log(line.trimEnd())
+  }
+
+  const logPath = getStartupLogPath()
+  const logDir = path.dirname(logPath)
+  void fs.mkdir(logDir, { recursive: true })
+    .then(() => fs.appendFile(logPath, line, 'utf-8'))
+    .catch(error => {
+      console.error('[startup-log-write-failed]', error)
+    })
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function renderStartupErrorPage(win: BrowserWindow, title: string, details: string): void {
+  const safeTitle = escapeHtml(title)
+  const safeDetails = escapeHtml(details)
+  const safeLogPath = escapeHtml(getStartupLogPath())
+  const html = `<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <title>AnimeGate - blad startu</title>
+    <style>
+      body { margin: 0; font-family: Segoe UI, Arial, sans-serif; background: #181825; color: #cdd6f4; }
+      .wrap { max-width: 840px; margin: 40px auto; padding: 20px 24px; border: 1px solid #3d3f53; border-radius: 10px; background: #1e1e2e; }
+      h1 { margin: 0 0 12px; font-size: 20px; color: #f38ba8; }
+      p { margin: 0 0 10px; line-height: 1.5; }
+      code, pre { font-family: Consolas, monospace; }
+      pre { white-space: pre-wrap; word-break: break-word; background: #11111b; border: 1px solid #2e2f42; padding: 12px; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>${safeTitle}</h1>
+      <p>Aplikacja wykryla krytyczny blad startu i uruchomila tryb diagnostyczny.</p>
+      <p>Log diagnostyczny: <code>${safeLogPath}</code></p>
+      <pre>${safeDetails}</pre>
+    </div>
+  </body>
+</html>`
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 }
 
 function buildWaveformCacheKey(filePath: string, size: number, mtimeMs: number): string {
@@ -342,6 +427,19 @@ async function writeApiConfig(config: Record<string, string>): Promise<void> {
 }
 
 function createWindow(): void {
+  const preloadPath = path.join(__dirname, 'preload.js')
+  const rendererIndexPath = path.join(__dirname, '../dist/index.html')
+  startupLog('INFO', 'createWindow:start', {
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    execPath: process.execPath,
+    resourcesPath: process.resourcesPath,
+    dirname: __dirname,
+    preloadPath,
+    rendererIndexPath,
+    hasDevServerUrl: Boolean(process.env.VITE_DEV_SERVER_URL),
+  })
+
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -349,16 +447,72 @@ function createWindow(): void {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
     },
     title: 'AnimeGate Translator',
   })
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    void win.loadURL(process.env.VITE_DEV_SERVER_URL)
-  } else {
-    void win.loadFile(path.join(__dirname, '../dist/index.html'))
-  }
+  win.webContents.on('did-finish-load', () => {
+    startupLog('INFO', 'webContents:did-finish-load', {
+      url: win.webContents.getURL(),
+    })
+  })
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    startupLog('ERROR', 'webContents:did-fail-load', {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    })
+    if (isMainFrame) {
+      renderStartupErrorPage(
+        win,
+        'Nie mozna zaladowac UI aplikacji',
+        `Code: ${errorCode}\nDescription: ${errorDescription}\nURL: ${validatedURL}`,
+      )
+    }
+  })
+
+  win.webContents.on('preload-error', (_event, preloadFile, error) => {
+    startupLog('ERROR', 'webContents:preload-error', {
+      preloadFile,
+      error: toLogString(error),
+    })
+    renderStartupErrorPage(
+      win,
+      'Blad preload',
+      `Preload file: ${preloadFile}\nError: ${toLogString(error)}`,
+    )
+  })
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    startupLog('ERROR', 'webContents:render-process-gone', details)
+    renderStartupErrorPage(
+      win,
+      'Proces renderera zostal zakonczony',
+      toLogString(details),
+    )
+  })
+
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (level >= 2) {
+      startupLog('WARN', 'renderer:console-message', { level, message, line, sourceId })
+    }
+  })
+
+  const loadPromise = process.env.VITE_DEV_SERVER_URL
+    ? win.loadURL(process.env.VITE_DEV_SERVER_URL)
+    : win.loadFile(rendererIndexPath)
+
+  void loadPromise.catch(error => {
+    startupLog('ERROR', 'window-load-failed', error)
+    renderStartupErrorPage(
+      win,
+      'Nie mozna uruchomic aplikacji',
+      toLogString(error),
+    )
+  })
 
   Menu.setApplicationMenu(null)
 }
@@ -563,6 +717,11 @@ function setupUpdaterIpc(): void {
 }
 
 app.whenReady().then(() => {
+  startupLog('INFO', 'app:ready', {
+    version: app.getVersion(),
+    isPackaged: app.isPackaged,
+    userData: app.getPath('userData'),
+  })
   setupFileIpc()
   setupUpdaterIpc()
   createWindow()
@@ -576,7 +735,22 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  startupLog('INFO', 'app:window-all-closed', { platform: process.platform })
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('unresponsive', () => {
+    startupLog('WARN', 'webContents:unresponsive', { id: contents.id })
+  })
+})
+
+process.on('uncaughtException', error => {
+  startupLog('ERROR', 'process:uncaughtException', error)
+})
+
+process.on('unhandledRejection', reason => {
+  startupLog('ERROR', 'process:unhandledRejection', reason)
 })
