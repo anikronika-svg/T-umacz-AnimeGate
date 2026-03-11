@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.16`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.17`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -584,3 +584,29 @@
   - notatki sa lepiej rozrozniane na profile:
     - niesmiala/zakochana vs chlodna/zdystansowana vs wredna/arogancka vs energiczna/komediowa vs opiekuncza/spokojna.
   - poprawiono rozroznialnosc stylu w promptach tlumaczenia per postac.
+
+## 29) Naprawa flow Kroku 0 i przycisku Wczytaj (v1.0.17)
+- Uporzadkowano docelowy podzial:
+  - `Krok 0` = tworzenie nowego projektu,
+  - `Wczytaj` = otwieranie istniejacego projektu przez wybor folderu.
+- UI Kroku 0:
+  - modal wyrównany i bardziej proporcjonalny:
+    - szerszy kontener,
+    - rowne panele `Nowy projekt` / `Otwórz istniejący projekt`,
+    - spojna wysokosc i rozmieszczenie akcji.
+- Flow tworzenia projektu:
+  - `Utworz i przejdz do Kroku 1` teraz:
+    1) tworzy projekt na dysku,
+    2) od razu ponownie otwiera go z dysku (weryfikacja realnego zapisu),
+    3) ustawia aktywny projekt,
+    4) zamyka Krok 0,
+    5) automatycznie otwiera modal `Postacie` (Krok 1).
+- Flow otwierania istniejacego projektu:
+  - przycisk `Wczytaj` w glownym UI:
+    - otwiera systemowy wybór folderu projektu,
+    - wczytuje projekt z wybranego folderu,
+    - ustawia go jako aktywny i hydratuje stan aplikacji.
+- Architektura:
+  - dodano wspolny handler `openDiskProjectByDirectory(...)`, aby uniknac rozjazdu logiki miedzy:
+    - otwarciem z modalu Kroku 0,
+    - otwarciem z przycisku `Wczytaj`.

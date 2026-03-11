@@ -1359,13 +1359,13 @@ function ProjectStepZeroModal({
   if (!open) return null
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,10,15,0.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-      <div style={{ width: 860, maxWidth: '96vw', background: '#171a26', border: `1px solid ${C.border}`, boxShadow: '0 14px 50px rgba(0,0,0,0.45)' }}>
+      <div style={{ width: 1120, maxWidth: '96vw', background: '#171a26', border: `1px solid ${C.border}`, boxShadow: '0 14px 50px rgba(0,0,0,0.45)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: `1px solid ${C.border}` }}>
           <div style={{ color: C.accent, fontWeight: 700 }}>Krok 0: Projekt</div>
           <button style={BASE_BTN} onClick={onClose}>Zamknij</button>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: 12 }}>
-          <div style={{ border: `1px solid ${C.border}`, padding: 10, background: '#1e2131' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12, padding: 12 }}>
+          <div style={{ border: `1px solid ${C.border}`, padding: 12, background: '#1e2131', minHeight: 274, display: 'flex', flexDirection: 'column' }}>
             <div style={{ color: C.accentY, fontWeight: 700, marginBottom: 8 }}>Nowy projekt</div>
             <div style={{ fontSize: 12, color: C.textDim, marginBottom: 6 }}>Tytul projektu:</div>
             <input
@@ -1381,12 +1381,12 @@ function ProjectStepZeroModal({
                 {newBaseDir || 'Nie wybrano folderu'}
               </div>
             </div>
-            <div style={{ marginTop: 10 }}>
+            <div style={{ marginTop: 'auto', paddingTop: 12 }}>
               <button style={{ ...BASE_BTN, background: '#1f6fb0', borderColor: '#2b8bd8', color: '#fff', fontWeight: 700 }} onClick={onCreate}>Utworz i przejdz do Kroku 1</button>
             </div>
           </div>
 
-          <div style={{ border: `1px solid ${C.border}`, padding: 10, background: '#1e2131' }}>
+          <div style={{ border: `1px solid ${C.border}`, padding: 12, background: '#1e2131', minHeight: 274, display: 'flex', flexDirection: 'column' }}>
             <div style={{ color: C.accentY, fontWeight: 700, marginBottom: 8 }}>Otwórz istniejący projekt</div>
             <div style={{ fontSize: 12, color: C.textDim, marginBottom: 6 }}>Folder projektu:</div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -1395,8 +1395,8 @@ function ProjectStepZeroModal({
                 {openDir || 'Nie wybrano folderu'}
               </div>
             </div>
-            <div style={{ marginTop: 10 }}>
-              <button style={{ ...BASE_BTN, background: '#1f6fb0', borderColor: '#2b8bd8', color: '#fff', fontWeight: 700 }} onClick={onOpenExisting}>Otworz projekt</button>
+            <div style={{ marginTop: 'auto', paddingTop: 12 }}>
+              <button style={{ ...BASE_BTN, background: '#1f6fb0', borderColor: '#2b8bd8', color: '#fff', fontWeight: 700 }} onClick={onOpenExisting}>Wczytaj istniejacy projekt</button>
             </div>
           </div>
         </div>
@@ -4133,14 +4133,6 @@ export default function App(): React.ReactElement {
     appendTranslationLog(`Utworzono projekt serii: ${title} (${projectId}).`)
   }
 
-  const handleLoadSeriesProject = (): void => {
-    if (!projectPickerId) return
-    const selected = seriesProjects.find(project => project.id === projectPickerId)
-    if (!selected) return
-    setCurrentProjectId(selected.id)
-    appendTranslationLog(`Wczytano projekt: ${selected.title} (${selected.id}).`)
-  }
-
   const buildDiskProjectConfig = (
     projectDir: string,
     configPath: string,
@@ -4237,8 +4229,19 @@ export default function App(): React.ReactElement {
     setOpenProjectDir(result.directoryPath)
   }
 
+  const openDiskProjectByDirectory = async (projectDir: string): Promise<void> => {
+    if (!window.electronAPI?.openProject) return
+    const normalizedDir = projectDir.trim()
+    if (!normalizedDir) {
+      setProjectStepStatus('Wybierz folder istniejącego projektu.')
+      return
+    }
+    const result = await window.electronAPI.openProject(normalizedDir)
+    hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
+  }
+
   const handleCreateDiskProject = async (): Promise<void> => {
-    if (!window.electronAPI?.createProject) return
+    if (!window.electronAPI?.createProject || !window.electronAPI?.openProject) return
     const title = newProjectTitle.trim()
     if (!title) {
       setProjectStepStatus('Podaj tytul projektu.')
@@ -4262,24 +4265,36 @@ export default function App(): React.ReactElement {
           title,
         },
       })
-      hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
+      // Verify persisted config by opening it again from disk.
+      const reopened = await window.electronAPI.openProject(result.projectDir)
+      hydrateFromDiskProject(reopened.config, reopened.projectDir, reopened.configPath)
       setNewProjectTitle('')
+      setOpenProjectDir('')
+      setCharactersOpen(true)
+      setProjectStepStatus(`Utworzono i aktywowano projekt: ${title}`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nie udalo sie utworzyc projektu.'
       setProjectStepStatus(`BLAD tworzenia projektu: ${message}`)
     }
   }
 
-  const handleOpenDiskProject = async (): Promise<void> => {
-    if (!window.electronAPI?.openProject) return
-    const projectDir = openProjectDir.trim()
-    if (!projectDir) {
-      setProjectStepStatus('Wybierz folder istniejącego projektu.')
-      return
-    }
+  const handleLoadDiskProjectFromButton = async (): Promise<void> => {
+    if (!window.electronAPI?.pickProjectDirectory || !window.electronAPI?.openProject) return
     try {
-      const result = await window.electronAPI.openProject(projectDir)
-      hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
+      const result = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder istniejącego projektu' })
+      if (result.canceled || !result.directoryPath) return
+      setOpenProjectDir(result.directoryPath)
+      await openDiskProjectByDirectory(result.directoryPath)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nie udalo sie wczytac projektu.'
+      setProjectStepStatus(`BLAD wczytywania projektu: ${message}`)
+      setProjectStepOpen(true)
+    }
+  }
+
+  const handleOpenDiskProject = async (): Promise<void> => {
+    try {
+      await openDiskProjectByDirectory(openProjectDir)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nie udalo sie otworzyc projektu.'
       setProjectStepStatus(`BLAD otwierania projektu: ${message}`)
@@ -5914,7 +5929,7 @@ export default function App(): React.ReactElement {
           currentProjectId={projectPickerId}
           onSelectProjectId={setProjectPickerId}
           onOpenProjectStep={() => setProjectStepOpen(true)}
-          onLoadProject={handleLoadSeriesProject}
+          onLoadProject={() => { void handleLoadDiskProjectFromButton() }}
           activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
           loadedFileName={loadedFileName}
         />
