@@ -40,7 +40,7 @@ import {
   type ProjectLineAssignment,
 } from './project/assignmentMatching'
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
-import { mergeUserNotesIntoProfile } from './project/characterUserNotesProfile'
+import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import { CharacterNotesModal } from './components/CharacterNotesModal'
 
 const C = {
@@ -2705,7 +2705,18 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setStep('step1')
-      setDraft({ ...settings, characters: normalizeDraftCharacters(settings.characters) })
+      setDraft({
+        ...settings,
+        characters: normalizeDraftCharacters(
+          settings.characters.map(character => ({
+            ...character,
+            profile: mergeCharacterNotesAnalysisIntoProfile(
+              character.profile,
+              character.profile.characterUserNotes,
+            ),
+          })),
+        ),
+      })
       setSearch('')
       setSearchResults([])
       // Step 1 is a session workspace: always start clean until user performs a search.
@@ -2787,7 +2798,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       ? base.temperament
       : analyzed.temperament ?? ''
 
-    return {
+    const mergedProfile = {
       ...base,
       archetype: nextArchetype,
       characterTypeId: normalizedTypeSelection.typeId,
@@ -2802,6 +2813,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       vocabularyType: nextVocabularyType,
       temperament: nextTemperament,
     }
+    return mergeCharacterNotesAnalysisIntoProfile(mergedProfile, mergedProfile.characterUserNotes)
   }
 
   useEffect(() => {
@@ -2865,7 +2877,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         character.id === characterId
           ? {
             ...character,
-            profile: mergeUserNotesIntoProfile(character.profile, notes),
+            profile: mergeCharacterNotesAnalysisIntoProfile(character.profile, notes),
           }
           : character
       )),
@@ -3416,7 +3428,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                       onChange={e => setDraft(prev => ({
                         ...prev,
                         characters: prev.characters.map(item => item.id === character.id
-                          ? { ...item, profile: mergeUserNotesIntoProfile(item.profile, e.currentTarget.value) }
+                          ? { ...item, profile: mergeCharacterNotesAnalysisIntoProfile(item.profile, e.currentTarget.value) }
                           : item),
                       }))}
                       placeholder="Notatki użytkownika (Krok 2)"
@@ -4591,7 +4603,7 @@ export default function App(): React.ReactElement {
     'Return only final translation text, without notes.',
     'Prioritize natural subtitle phrasing over literal word-for-word calques.',
     'Keep subtitle readability and speaking rhythm.',
-    'Style priority: manual character fields (Krok 3) > user character notes (Krok 2) > saved project fields > character type/subtype > auto analysis > character gender > global style base.',
+    'Style priority: manual character fields (Krok 3) > user character notes (Krok 2) > character type/subtype > saved project fields > auto analysis > character gender > global style base.',
     context?.characterName ? `Character: ${context.characterName}` : '',
     context?.gender ? `Character gender: ${context.gender}` : '',
     context?.effectiveStyle ? `Active style: ${context.effectiveStyle} (${context.effectiveStyleSource})` : '',

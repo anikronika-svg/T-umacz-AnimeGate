@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.14`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.15`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -520,3 +520,36 @@
     4) typ/podtyp charakteru,
     5) analiza AniList.
   - notatki dzialaja per postac (nie globalnie).
+
+## 27) Auto-analiza notatek postaci Krok 2 -> Krok 3 (v1.0.15)
+- Domknieto brakujacy etap: notatki postaci sa teraz analizowane heurystycznie i automatycznie mapowane na profil postaci.
+- Nowy modul:
+  - `src/project/characterNotesAnalysis.ts`
+  - odpowiedzialny za:
+    - wykrywanie slow kluczowych i wzorcow opisu postaci,
+    - scoring sugestii `typ + podtyp`,
+    - budowe podpowiedzi dla pol profilu:
+      - `speakingTraits`
+      - `characterNote`
+      - `personalitySummary`
+      - `mannerOfAddress`
+      - `politenessLevel`
+      - `vocabularyType`
+      - `temperament`
+    - bezpieczne scalanie z priorytetami (nie nadpisuje recznych pol Kroku 3).
+- Priorytet praktyczny po wdrozeniu:
+  1) reczne pola Kroku 3,
+  2) analiza notatek Kroku 2,
+  3) typ/podtyp (w tym sugestie z analizy notatek),
+  4) dane zapisane/projektowe,
+  5) analiza AniList.
+- Zachowanie typu/podtypu:
+  - analiza notatek moze podmienic `type/subtype`, ale tylko gdy obecna wartosc wyglada na domyslna/legacy (fallback po archetype),
+  - gdy user ustawil niestandardowy typ/podtyp recznie, heurystyka go nie nadpisuje.
+- Integracja:
+  - `src/App.tsx`:
+    - analiza odpalana przy edycji notatek i przy inicjalizacji modalu (dla juz zapisanych notatek),
+    - Krok 3 od razu pokazuje auto-uzupelnione pola tam, gdzie sa puste,
+    - prompt tlumaczenia dostaje notatki + efekt uzupelnionego profilu.
+  - `src/project/characterUserNotesProfile.ts`:
+    - uproszczony wrapper zgodny wstecznie, delegujacy do nowego modulu analizy.
