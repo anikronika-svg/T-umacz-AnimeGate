@@ -141,6 +141,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -171,6 +172,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -210,6 +212,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -236,6 +239,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -276,6 +280,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -302,6 +307,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -340,6 +346,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -366,6 +373,7 @@ declare global {
                 archetype: string
                 characterTypeId?: string
                 characterSubtypeId?: string
+                characterUserNotes?: string
                 speakingTraits: string
                 characterNote: string
                 anilistDescription: string
@@ -386,4 +394,5 @@ declare global {
     }
   }
 }
+
 

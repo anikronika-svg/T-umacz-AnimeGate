@@ -2,6 +2,7 @@ export interface CharacterSpeechProfile {
   archetype: string
   characterTypeId: string
   characterSubtypeId: string
+  characterUserNotes: string
   speakingTraits: string
   characterNote: string
   personalitySummary: string
@@ -25,6 +26,7 @@ export function createDefaultCharacterSpeechProfile(): CharacterSpeechProfile {
     archetype: 'default',
     characterTypeId: '',
     characterSubtypeId: '',
+    characterUserNotes: '',
     speakingTraits: '',
     characterNote: '',
     personalitySummary: '',
@@ -44,6 +46,7 @@ export function normalizeCharacterSpeechProfile(
     archetype: profile?.archetype ?? defaults.archetype,
     characterTypeId: profile?.characterTypeId ?? defaults.characterTypeId,
     characterSubtypeId: profile?.characterSubtypeId ?? defaults.characterSubtypeId,
+    characterUserNotes: profile?.characterUserNotes ?? defaults.characterUserNotes,
     speakingTraits: profile?.speakingTraits ?? defaults.speakingTraits,
     characterNote: profile?.characterNote ?? defaults.characterNote,
     personalitySummary: profile?.personalitySummary ?? defaults.personalitySummary,

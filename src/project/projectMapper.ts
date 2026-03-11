@@ -18,6 +18,7 @@ export interface DiskProjectCharacterProfile {
   archetype: string
   characterTypeId?: string
   characterSubtypeId?: string
+  characterUserNotes?: string
   speakingTraits: string
   characterNote: string
   personalitySummary?: string
@@ -121,6 +122,7 @@ function mapCharacterToDisk(character: CharacterStyleAssignment): DiskProjectCha
       archetype: character.profile.archetype,
       characterTypeId: character.profile.characterTypeId,
       characterSubtypeId: character.profile.characterSubtypeId,
+      characterUserNotes: character.profile.characterUserNotes,
       speakingTraits: character.profile.speakingTraits,
       characterNote: character.profile.characterNote,
       personalitySummary: character.profile.personalitySummary,
@@ -147,6 +149,7 @@ function mapDiskToCharacter(character: DiskProjectCharacter, fallbackId: number)
       archetype: (character.profile?.archetype as CharacterArchetypeId) || defaults.archetype,
       characterTypeId: character.profile?.characterTypeId || defaults.characterTypeId,
       characterSubtypeId: character.profile?.characterSubtypeId || defaults.characterSubtypeId,
+      characterUserNotes: character.profile?.characterUserNotes || defaults.characterUserNotes,
       speakingTraits: character.profile?.speakingTraits || defaults.speakingTraits,
       characterNote: character.profile?.characterNote || defaults.characterNote,
       personalitySummary: character.profile?.personalitySummary || defaults.personalitySummary,

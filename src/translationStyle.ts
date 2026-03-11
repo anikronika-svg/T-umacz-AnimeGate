@@ -325,6 +325,10 @@ export function buildTranslationStyleContext(
     chunks.push(`Notatka postaci: ${character.profile.characterNote}`)
   }
 
+  if (character?.profile.characterUserNotes) {
+    chunks.push(`Notatki uzytkownika (Krok 2): ${character.profile.characterUserNotes}`)
+  }
+
   if (character?.profile.personalitySummary) {
     chunks.push(`Skrot osobowosci: ${character.profile.personalitySummary}`)
   }

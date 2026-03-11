@@ -40,6 +40,8 @@ import {
   type ProjectLineAssignment,
 } from './project/assignmentMatching'
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
+import { mergeUserNotesIntoProfile } from './project/characterUserNotesProfile'
+import { CharacterNotesModal } from './components/CharacterNotesModal'
 
 const C = {
   bg0: '#1e1e2e',
@@ -202,6 +204,7 @@ interface TranslationRequestContext {
   characterSubtypeId: string
   characterSubtypeLabel: string
   characterSubtypePrompt: string
+  characterUserNotes: string
   speakingTraits: string
   characterNote: string
   styleContext: string
@@ -2611,6 +2614,7 @@ interface CharacterModalProps {
 function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose, onSave, onProjectMetaUpdate }: CharacterModalProps): React.ReactElement | null {
   const [step, setStep] = useState<CharacterStep>('step1')
   const [draft, setDraft] = useState<ProjectTranslationStyleSettings>(settings)
+  const [isCharacterNotesOpen, setCharacterNotesOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<AniListAnimeResult[]>([])
   const [selectedAnime, setSelectedAnime] = useState<AniListAnimeResult | null>(null)
@@ -2677,6 +2681,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         ...existing.profile,
         characterTypeId: existing.profile.characterTypeId || item.profile.characterTypeId || '',
         characterSubtypeId: existing.profile.characterSubtypeId || item.profile.characterSubtypeId || '',
+        characterUserNotes: existing.profile.characterUserNotes.trim() || item.profile.characterUserNotes.trim() || '',
         speakingTraits: existing.profile.speakingTraits.trim() || item.profile.speakingTraits.trim() || '',
         characterNote: existing.profile.characterNote.trim() || item.profile.characterNote.trim() || '',
         anilistDescription: existing.profile.anilistDescription.trim() || item.profile.anilistDescription.trim() || '',
@@ -2787,6 +2792,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       archetype: nextArchetype,
       characterTypeId: normalizedTypeSelection.typeId,
       characterSubtypeId: normalizedTypeSelection.subtypeId,
+      characterUserNotes: base.characterUserNotes,
       speakingTraits: nextTraits,
       characterNote: nextNote,
       personalitySummary: nextSummary,
@@ -2849,6 +2855,20 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     setDraft(prev => ({
       ...prev,
       characters: normalizeDraftCharacters(prev.characters.map(character => ({ ...character, style: prev.globalStyle }))),
+    }))
+  }
+
+  const handleChangeCharacterUserNotes = (characterId: number, notes: string): void => {
+    setDraft(prev => ({
+      ...prev,
+      characters: prev.characters.map(character => (
+        character.id === characterId
+          ? {
+            ...character,
+            profile: mergeUserNotesIntoProfile(character.profile, notes),
+          }
+          : character
+      )),
     }))
   }
 
@@ -3210,10 +3230,16 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   )}
                 </div>
               </div>
-              <div style={{ marginTop: 10, display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 10 }}>
                 <button style={{ ...BASE_BTN, height: 30 }} onClick={() => setStep('step1')}>Wroc do Kroku 1</button>
                 <button
-                  style={{ ...BASE_BTN, height: 30, background: '#2d4b7d', borderColor: '#3f7ed2' }}
+                  style={{ ...BASE_BTN, height: 30, minWidth: 210, background: '#2d4b7d', borderColor: '#3f7ed2' }}
+                  onClick={() => setCharacterNotesOpen(true)}
+                >
+                  Profil / notatki postaci
+                </button>
+                <button
+                  style={{ ...BASE_BTN, height: 30, justifySelf: 'end', background: '#2d4b7d', borderColor: '#3f7ed2' }}
                   onClick={() => {
                     setDraft(prev => ({ ...prev, characters: normalizeDraftCharacters(prev.characters) }))
                     setStep('step3')
@@ -3385,6 +3411,18 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                       placeholder="Opis charakteru"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                     />
+                    <textarea
+                      value={character.profile.characterUserNotes}
+                      onChange={e => setDraft(prev => ({
+                        ...prev,
+                        characters: prev.characters.map(item => item.id === character.id
+                          ? { ...item, profile: mergeUserNotesIntoProfile(item.profile, e.currentTarget.value) }
+                          : item),
+                      }))}
+                      placeholder="Notatki użytkownika (Krok 2)"
+                      rows={3}
+                      style={{ marginTop: 4, width: '100%', background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '4px 6px', resize: 'vertical' }}
+                    />
                     <input
                       value={character.profile.personalitySummary}
                       onChange={e => setDraft(prev => ({
@@ -3462,6 +3500,16 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
             Zapisz reczne ustawienia postaci
           </button>
         </div>
+        <CharacterNotesModal
+          open={isCharacterNotesOpen}
+          characters={normalizeDraftCharacters(draft.characters).map(character => ({
+            id: character.id,
+            name: character.name,
+            notes: character.profile.characterUserNotes,
+          }))}
+          onClose={() => setCharacterNotesOpen(false)}
+          onChangeNotes={handleChangeCharacterUserNotes}
+        />
       </div>
     </div>
   )
@@ -3913,6 +3961,7 @@ export default function App(): React.ReactElement {
       characterSubtypeId: normalizedTypeSelection.subtypeId,
       characterSubtypeLabel: subtypeOption?.label ?? '',
       characterSubtypePrompt: buildCharacterArchetypePrompt(normalizedTypeSelection.typeId, normalizedTypeSelection.subtypeId),
+      characterUserNotes: character?.profile.characterUserNotes?.trim() ?? '',
       speakingTraits: character?.profile.speakingTraits?.trim() ?? '',
       characterNote: character?.profile.characterNote?.trim() ?? '',
       styleContext: resolvedCharacterName
@@ -4542,7 +4591,7 @@ export default function App(): React.ReactElement {
     'Return only final translation text, without notes.',
     'Prioritize natural subtitle phrasing over literal word-for-word calques.',
     'Keep subtitle readability and speaking rhythm.',
-    'Style priority: manual character fields > saved project fields > character type/subtype > auto analysis > character gender > global style base.',
+    'Style priority: manual character fields (Krok 3) > user character notes (Krok 2) > saved project fields > character type/subtype > auto analysis > character gender > global style base.',
     context?.characterName ? `Character: ${context.characterName}` : '',
     context?.gender ? `Character gender: ${context.gender}` : '',
     context?.effectiveStyle ? `Active style: ${context.effectiveStyle} (${context.effectiveStyleSource})` : '',
@@ -4552,6 +4601,7 @@ export default function App(): React.ReactElement {
     context?.characterTypeLabel ? `Character type (PL): ${context.characterTypeLabel} (${context.characterTypeId})` : '',
     context?.characterSubtypeLabel ? `Character subtype (PL): ${context.characterSubtypeLabel} (${context.characterSubtypeId})` : '',
     context?.characterSubtypePrompt ? `Character type/subtype directive:\n${context.characterSubtypePrompt}` : '',
+    context?.characterUserNotes ? `User character notes (PL): ${context.characterUserNotes}` : '',
     (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
     context?.characterNote ? `Character note to respect: ${context.characterNote}` : '',
@@ -5087,6 +5137,7 @@ export default function App(): React.ReactElement {
             && context.archetype === 'default'
             && !context.characterTypeId
             && !context.characterSubtypeId
+            && !context.characterUserNotes
             && context.effectiveStyleSource === 'global'
           ))
           if (!canUseBatch) {

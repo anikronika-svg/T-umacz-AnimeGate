@@ -77,6 +77,7 @@ interface DiskProjectCharacterProfile {
   archetype: string
   characterTypeId?: string
   characterSubtypeId?: string
+  characterUserNotes?: string
   speakingTraits: string
   characterNote: string
   personalitySummary?: string

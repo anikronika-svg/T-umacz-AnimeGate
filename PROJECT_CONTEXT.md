@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.13`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.14`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -494,3 +494,29 @@
     - `src/electron.d.ts`
 - Otwarte rzeczy (kolejny etap):
   - mozna rozszerzyc automatyczne przypisywanie typu/podtypu bezposrednio z analizy AniList (obecnie fallback idzie przez mapowanie legacy archetype -> type/subtype).
+
+## 26) Notatki postaci miedzy Krokiem 2 a Krokiem 3 (v1.0.14)
+- Dodano nowa funkcje `Profil / notatki postaci` jako dodatkowe zrodlo danych profilu:
+  - przycisk w Kroku 2 (dolny obszar akcji, centralnie),
+  - nowy modal `CharacterNotesModal` z duzym polem tekstowym dla kazdej postaci.
+- Zakres danych:
+  - nowe pole profilu postaci: `characterUserNotes`,
+  - zapis/odczyt w projekcie przez mappery i kontrakty Electron:
+    - `src/project/projectMapper.ts`
+    - `electron/projectStorage.ts`
+    - `electron/preload.ts`
+    - `src/electron.d.ts`
+- Integracja z Krokiem 3:
+  - Krok 3 wyswietla i pozwala edytowac `Notatki użytkownika (Krok 2)` na karcie postaci.
+  - notatki sa mapowane do profilu przez helper `mergeUserNotesIntoProfile`:
+    - uzupelnia tylko puste pola (`speakingTraits`, `characterNote`, `personalitySummary`, `temperament`, `mannerOfAddress`, `vocabularyType`, `politenessLevel`),
+    - nie nadpisuje recznie uzupelnionych pol Kroku 3.
+- Integracja z promptem tlumaczenia:
+  - `TranslationRequestContext` i `buildSystemPrompt` dostaja `characterUserNotes`,
+  - prompt ma jawnie wpisany priorytet:
+    1) reczne pola Kroku 3,
+    2) notatki postaci z Kroku 2,
+    3) zapisane dane projektu,
+    4) typ/podtyp charakteru,
+    5) analiza AniList.
+  - notatki dzialaja per postac (nie globalnie).
