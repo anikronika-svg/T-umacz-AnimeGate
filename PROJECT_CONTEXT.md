@@ -4,10 +4,9 @@
 - Data aktualizacji: 2026-03-11.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
 - Ostatnie commity:
+  - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
   - `01ba205` – konfiguracja instalatora NSIS + `build:win`
   - `b129606` – stabilizacja wyboru silnika (stop flicker / auto-switch loop)
-  - `fdc5265` – initial commit
-- Biezacy etap (lokalnie, do push): Refaktor v1 Etap 0 + Etap 2 (baseline verify + testy parsera ASS round-trip).
 
 ## 2) Stack i architektura
 - Electron (main/preload) + React + TypeScript + Vite.
@@ -89,12 +88,14 @@
   - `npm run build:renderer`
   - `npm run build:electron`
   - `npm run build:win`
+  - `npm run release:win` (full build + publish artifacts do GitHub Releases)
 - Konfiguracja `electron-builder` (w `package.json`):
   - `appId`: `com.animegate.translator`
   - `productName`: `AnimeGate Translator`
   - target: `nsis`
   - `artifactName`: `AnimeGate-Translator-Setup.exe`
   - NSIS: `perMachine=true`, `oneClick=false`, skroty Desktop + Start Menu.
+  - publish: `github` (`owner=anikronika-svg`, `repo=T-umacz-AnimeGate`, `releaseType=release`).
 - Wygenerowany instalator:
   - `C:\Users\Adrian\Desktop\Tlumacz AnimeGate\release\AnimeGate-Translator-Setup.exe`
 
@@ -132,10 +133,16 @@
   - walidacje zachowania tagow ASS, `\N`, braku utraty `sourceRaw`, semantyki `tlmode`.
 
 ## 9) Auto-update (analiza stanu przed wdrozeniem)
-- Na ten moment auto-update NIE jest jeszcze wdrozony:
-  - brak `electron-updater`,
-  - brak `build.publish` dla GitHub Releases,
-  - brak runtime updatera w `electron/main.ts`,
-  - brak IPC/preload/UI dla statusu aktualizacji,
-  - brak root `.github/workflows` dla release automation.
-- Następny krok: mały etap foundation pod auto-update (konfiguracja publish + dependency), bez zmiany zachowania runtime.
+- Etap foundation (bez zmiany runtime/UI) został wdrozony:
+  - dodano dependency `electron-updater`,
+  - dodano `build.publish` dla GitHub Releases,
+  - dodano skrypt `release:win`.
+- Nadal NIE jest wdrozone:
+  - runtime updater w `electron/main.ts`,
+  - IPC/preload kanały updatera,
+  - UI statusu aktualizacji,
+  - workflow `.github/workflows/release.yml`.
+- Uwaga dot. repo prywatnego:
+  - visibility repo nie zostala potwierdzona narzedziowo w tym srodowisku (brak `gh`, brak dostepu do GitHub API),
+  - jezeli repo jest prywatne, klient auto-update bedzie wymagal dostepu do release assets (token/pośrednia dystrybucja), co wpływa na bezpieczenstwo i UX.
+- Następny krok: implementacja runtime updatera (main process) z zachowaniem obecnego procesu build.
