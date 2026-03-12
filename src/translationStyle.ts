@@ -8,7 +8,7 @@ import {
 } from './project/characterProfileModel'
 import { resolveCharacterByName } from './project/characterNameMatching'
 
-export type CharacterGender = 'Male' | 'Female' | 'Unknown'
+export type CharacterGender = 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Unknown'
 
 export type TranslationStyleId =
   | 'neutral'
@@ -58,9 +58,13 @@ export type CharacterStyleProfile = CharacterSpeechProfile & {
 export interface CharacterStyleAssignment {
   id: number
   name: string
+  displayName?: string
+  originalName?: string
   anilistCharacterId?: number | null
   anilistRole?: string
   imageUrl?: string | null
+  avatarPath?: string | null
+  avatarUrl?: string | null
   gender: CharacterGender
   avatarColor: string
   style: TranslationStyleId | null
@@ -308,7 +312,11 @@ export function buildTranslationStyleContext(
 
   const chunks = [
     `Postac: ${displayName}`,
+    character?.displayName ? `Nazwa wyswietlana: ${character.displayName}` : '',
+    character?.originalName ? `Nazwa zrodlowa: ${character.originalName}` : '',
     `Plec: ${gender ?? 'Unknown'}`,
+    `Rodzaj tlumaczenia: ${character?.profile.translationGender ?? 'unknown'}`,
+    `Styl mowienia (profil): ${character?.profile.speakingStyle ?? 'neutralny'}`,
     `Styl globalny: ${getStyleLabel(settings.globalStyle)}`,
     `Styl aktywny: ${getStyleLabel(effective.style)} (${effective.source === 'character' ? 'nadpisanie postaci' : 'globalny'})`,
     `Archetyp: ${getArchetypeLabel(character?.profile.archetype ?? 'default')}`,
@@ -333,6 +341,34 @@ export function buildTranslationStyleContext(
 
   if (character?.profile.characterUserNotes) {
     chunks.push(`Notatki uzytkownika (Krok 2): ${character.profile.characterUserNotes}`)
+  }
+
+  if (character?.profile.toneProfile) {
+    chunks.push(`Tone profile: ${character.profile.toneProfile}`)
+  }
+
+  if (character?.profile.translationNotes) {
+    chunks.push(`Notatki tlumaczeniowe: ${character.profile.translationNotes}`)
+  }
+
+  if (character?.profile.relationshipNotes) {
+    chunks.push(`Relacje / kontekst: ${character.profile.relationshipNotes}`)
+  }
+
+  if (character?.profile.honorificPreference) {
+    chunks.push(`Honorific preference: ${character.profile.honorificPreference}`)
+  }
+
+  if (character?.profile.formalityPreference) {
+    chunks.push(`Preferowana formalnosc: ${character.profile.formalityPreference}`)
+  }
+
+  if (character?.profile.customPromptHint) {
+    chunks.push(`Wskazowka promptu: ${character.profile.customPromptHint}`)
+  }
+
+  if (character?.profile.personalityTraits?.length) {
+    chunks.push(`Tagi cech osobowosci: ${character.profile.personalityTraits.join(', ')}`)
   }
 
   if (character?.profile.personalitySummary) {

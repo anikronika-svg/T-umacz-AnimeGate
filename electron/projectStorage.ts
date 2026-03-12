@@ -17,14 +17,32 @@ export interface DiskProjectCharacterProfile {
   politenessLevel: string
   vocabularyType: string
   temperament: string
+  translationGender?: string
+  speakingStyle?: string
+  toneProfile?: string
+  personalityTraits?: string[]
+  translationNotes?: string
+  honorificPreference?: string
+  formalityPreference?: string
+  relationshipNotes?: string
+  customPromptHint?: string
+  isUserEdited?: boolean
+  createdAt?: string
+  updatedAt?: string
+  sourceName?: string
+  manualOverrides?: Record<string, true>
 }
 
 export interface DiskProjectCharacter {
   id: number
   name: string
+  displayName?: string
+  originalName?: string
   anilistCharacterId?: number | null
   anilistRole?: string
   imageUrl?: string | null
+  avatarPath?: string | null
+  avatarUrl?: string | null
   gender: string
   avatarColor: string
   style: string | null

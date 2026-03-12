@@ -5,7 +5,10 @@ import type { CharacterAssignmentSuggestion } from '../project/characterAssignme
 export interface CharacterAssignmentGridItem {
   id: number
   name: string
+  displayName?: string
   gender: CharacterGender
+  translationGender?: string
+  speakingStyle?: string
   role?: string
   avatarColor: string
   imageUrl?: string | null
@@ -14,7 +17,9 @@ export interface CharacterAssignmentGridItem {
 function genderLabel(gender: CharacterGender): string {
   if (gender === 'Female') return 'Kobieta'
   if (gender === 'Male') return 'Mezczyzna'
-  return 'Unknown'
+  if (gender === 'Nonbinary') return 'Niebinarna'
+  if (gender === 'Other') return 'Inna'
+  return 'Nieustawiona'
 }
 
 function cardKeyFromName(value: string): string {
@@ -34,6 +39,7 @@ export function CharacterAssignmentGrid({
   suggestions,
   onAssignCharacter,
   onClearAssignment,
+  onEditCharacter,
 }: {
   projectLoaded: boolean
   characters: CharacterAssignmentGridItem[]
@@ -42,6 +48,7 @@ export function CharacterAssignmentGrid({
   suggestions: CharacterAssignmentSuggestion[]
   onAssignCharacter: (characterName: string) => void
   onClearAssignment: () => void
+  onEditCharacter: (characterId: number) => void
 }): React.ReactElement {
   const [brokenImages, setBrokenImages] = useState<Set<string>>(new Set())
   const activeKey = cardKeyFromName(activeCharacterName)
@@ -102,7 +109,7 @@ export function CharacterAssignmentGrid({
                       minWidth: 0,
                       cursor: 'pointer',
                     }}
-                  >
+                    >
                     <div style={{ width: '100%', aspectRatio: '1 / 1', borderRadius: 4, overflow: 'hidden', background: '#11131b', border: '1px solid #2e2f42' }}>
                       {showImage ? (
                         <img
@@ -136,10 +143,38 @@ export function CharacterAssignmentGrid({
                       )}
                     </div>
                     <div style={{ width: '100%', fontSize: 10, color: '#cdd6f4', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {character.name}
+                      {character.displayName?.trim() || character.name}
                     </div>
                     <div style={{ width: '100%', fontSize: 9, color: '#6c7086', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {genderLabel(character.gender)}{character.role ? ` • ${character.role}` : ''}
+                      {`Płeć: ${genderLabel(character.gender)}`}
+                    </div>
+                    <div style={{ width: '100%', fontSize: 9, color: '#6c7086', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {`Forma: ${character.translationGender || 'nieustawiona'}`}
+                    </div>
+                    <div style={{ width: '100%', fontSize: 9, color: '#6c7086', textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {`Styl: ${character.speakingStyle || 'nieustawiony'}`}
+                    </div>
+                    <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onEditCharacter(character.id)
+                        }}
+                        style={{
+                          marginTop: 2,
+                          height: 20,
+                          fontSize: 10,
+                          border: '1px solid #3f7ed2',
+                          borderRadius: 4,
+                          background: '#243048',
+                          color: '#cdd6f4',
+                          cursor: 'pointer',
+                          padding: '0 6px',
+                        }}
+                      >
+                        Edytuj
+                      </button>
                     </div>
                   </button>
                 )

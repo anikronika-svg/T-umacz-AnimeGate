@@ -27,14 +27,32 @@ export interface DiskProjectCharacterProfile {
   politenessLevel: string
   vocabularyType: string
   temperament: string
+  translationGender?: string
+  speakingStyle?: string
+  toneProfile?: string
+  personalityTraits?: string[]
+  translationNotes?: string
+  honorificPreference?: string
+  formalityPreference?: string
+  relationshipNotes?: string
+  customPromptHint?: string
+  isUserEdited?: boolean
+  createdAt?: string
+  updatedAt?: string
+  sourceName?: string
+  manualOverrides?: Record<string, true>
 }
 
 export interface DiskProjectCharacter {
   id: number
   name: string
+  displayName?: string
+  originalName?: string
   anilistCharacterId?: number | null
   anilistRole?: string
   imageUrl?: string | null
+  avatarPath?: string | null
+  avatarUrl?: string | null
   gender: string
   avatarColor: string
   style: string | null
@@ -116,9 +134,13 @@ function mapCharacterToDisk(character: CharacterStyleAssignment): DiskProjectCha
   return {
     id: character.id,
     name: character.name,
+    displayName: character.displayName,
+    originalName: character.originalName,
     anilistCharacterId: character.anilistCharacterId ?? null,
     anilistRole: character.anilistRole,
     imageUrl: character.imageUrl ?? null,
+    avatarPath: character.avatarPath ?? null,
+    avatarUrl: character.avatarUrl ?? null,
     gender: character.gender,
     avatarColor: character.avatarColor,
     style: character.style,
@@ -135,35 +157,71 @@ function mapCharacterToDisk(character: CharacterStyleAssignment): DiskProjectCha
       politenessLevel: character.profile.politenessLevel,
       vocabularyType: character.profile.vocabularyType,
       temperament: character.profile.temperament,
+      translationGender: character.profile.translationGender,
+      speakingStyle: character.profile.speakingStyle,
+      toneProfile: character.profile.toneProfile,
+      personalityTraits: character.profile.personalityTraits,
+      translationNotes: character.profile.translationNotes,
+      honorificPreference: character.profile.honorificPreference,
+      formalityPreference: character.profile.formalityPreference,
+      relationshipNotes: character.profile.relationshipNotes,
+      customPromptHint: character.profile.customPromptHint,
+      isUserEdited: character.profile.isUserEdited,
+      createdAt: character.profile.createdAt,
+      updatedAt: character.profile.updatedAt,
+      sourceName: character.profile.sourceName,
+      manualOverrides: character.profile.manualOverrides,
     },
   }
 }
 
 function mapDiskToCharacter(character: DiskProjectCharacter, fallbackId: number): CharacterStyleAssignment {
   const defaults = createDefaultProfile()
+  const mergedProfile = {
+    ...defaults,
+    archetype: (character.profile?.archetype as CharacterArchetypeId) || defaults.archetype,
+    characterTypeId: character.profile?.characterTypeId || defaults.characterTypeId,
+    characterSubtypeId: character.profile?.characterSubtypeId || defaults.characterSubtypeId,
+    characterUserNotes: character.profile?.characterUserNotes || defaults.characterUserNotes,
+    speakingTraits: character.profile?.speakingTraits || defaults.speakingTraits,
+    characterNote: character.profile?.characterNote || defaults.characterNote,
+    personalitySummary: character.profile?.personalitySummary || defaults.personalitySummary,
+    anilistDescription: character.profile?.anilistDescription || defaults.anilistDescription,
+    mannerOfAddress: character.profile?.mannerOfAddress || defaults.mannerOfAddress,
+    politenessLevel: character.profile?.politenessLevel || defaults.politenessLevel,
+    vocabularyType: character.profile?.vocabularyType || defaults.vocabularyType,
+    temperament: character.profile?.temperament || defaults.temperament,
+    translationGender: character.profile?.translationGender || defaults.translationGender,
+    speakingStyle: character.profile?.speakingStyle || defaults.speakingStyle,
+    toneProfile: character.profile?.toneProfile || defaults.toneProfile,
+    personalityTraits: Array.isArray(character.profile?.personalityTraits)
+      ? character.profile.personalityTraits.filter(Boolean)
+      : defaults.personalityTraits,
+    translationNotes: character.profile?.translationNotes || defaults.translationNotes,
+    honorificPreference: character.profile?.honorificPreference || defaults.honorificPreference,
+    formalityPreference: character.profile?.formalityPreference || defaults.formalityPreference,
+    relationshipNotes: character.profile?.relationshipNotes || defaults.relationshipNotes,
+    customPromptHint: character.profile?.customPromptHint || defaults.customPromptHint,
+    isUserEdited: Boolean(character.profile?.isUserEdited),
+    createdAt: character.profile?.createdAt || defaults.createdAt,
+    updatedAt: character.profile?.updatedAt || character.profile?.createdAt || defaults.updatedAt,
+    sourceName: character.profile?.sourceName || defaults.sourceName,
+    manualOverrides: character.profile?.manualOverrides || defaults.manualOverrides,
+  }
   return {
     id: Number.isFinite(character.id) ? character.id : fallbackId,
     name: character.name || `Character_${fallbackId}`,
+    displayName: character.displayName || character.name || `Character_${fallbackId}`,
+    originalName: character.originalName || '',
     anilistCharacterId: character.anilistCharacterId ?? null,
     anilistRole: character.anilistRole,
     imageUrl: character.imageUrl ?? null,
+    avatarPath: character.avatarPath ?? null,
+    avatarUrl: character.avatarUrl ?? null,
     gender: (character.gender as CharacterGender) || 'Unknown',
     avatarColor: character.avatarColor || '#4f8ad6',
     style: (character.style as TranslationStyleId | null) ?? null,
-    profile: {
-      archetype: (character.profile?.archetype as CharacterArchetypeId) || defaults.archetype,
-      characterTypeId: character.profile?.characterTypeId || defaults.characterTypeId,
-      characterSubtypeId: character.profile?.characterSubtypeId || defaults.characterSubtypeId,
-      characterUserNotes: character.profile?.characterUserNotes || defaults.characterUserNotes,
-      speakingTraits: character.profile?.speakingTraits || defaults.speakingTraits,
-      characterNote: character.profile?.characterNote || defaults.characterNote,
-      personalitySummary: character.profile?.personalitySummary || defaults.personalitySummary,
-      anilistDescription: character.profile?.anilistDescription || defaults.anilistDescription,
-      mannerOfAddress: character.profile?.mannerOfAddress || defaults.mannerOfAddress,
-      politenessLevel: character.profile?.politenessLevel || defaults.politenessLevel,
-      vocabularyType: character.profile?.vocabularyType || defaults.vocabularyType,
-      temperament: character.profile?.temperament || defaults.temperament,
-    },
+    profile: mergedProfile,
   }
 }
 

@@ -73,6 +73,8 @@ import {
   CharacterAssignmentGrid,
   type CharacterAssignmentGridItem,
 } from './components/CharacterAssignmentGrid'
+import { CharacterProfileEditorModal } from './components/CharacterProfileEditorModal'
+import type { CharacterSpeechProfile } from './project/characterProfileModel'
 
 const C = {
   bg0: '#1e1e2e',
@@ -214,6 +216,8 @@ interface DialogRow {
 interface TranslationRequestContext {
   characterName: string
   gender: CharacterGender
+  translationGender: string
+  speakingStyle: string
   effectiveStyle: TranslationStyleId
   effectiveStyleSource: 'character' | 'global'
   archetype: CharacterArchetypeId
@@ -227,6 +231,13 @@ interface TranslationRequestContext {
   characterUserNotes: string
   speakingTraits: string
   characterNote: string
+  toneProfile: string
+  personalityTraits: string[]
+  translationNotes: string
+  relationshipNotes: string
+  honorificPreference: string
+  formalityPreference: string
+  customPromptHint: string
   styleContext: string
   previousLineContinuation: string
   nextLineHint: string
@@ -716,8 +727,24 @@ const BASE_SEL: React.CSSProperties = {
 }
 
 function GenderBadge({ gender }: { gender: CharacterGender | undefined }): React.ReactElement {
-  const icon = gender === 'Female' ? '♀' : gender === 'Male' ? '♂' : '?'
-  const color = gender === 'Female' ? '#f26ca7' : gender === 'Male' ? '#4ea2ff' : C.textDim
+  const icon = gender === 'Female'
+    ? '♀'
+    : gender === 'Male'
+      ? '♂'
+      : gender === 'Nonbinary'
+        ? '⚲'
+        : gender === 'Other'
+          ? '◈'
+          : '?'
+  const color = gender === 'Female'
+    ? '#f26ca7'
+    : gender === 'Male'
+      ? '#4ea2ff'
+      : gender === 'Nonbinary'
+        ? '#8be9fd'
+        : gender === 'Other'
+          ? '#f9e2af'
+          : C.textDim
   return (
     <span style={{ color, fontWeight: 700, fontSize: 13, display: 'block', textAlign: 'center', lineHeight: 1 }}>
       {icon}
@@ -732,12 +759,16 @@ function Sep(): React.ReactElement {
 function genderLabel(gender: CharacterGender): string {
   if (gender === 'Female') return 'Kobieta'
   if (gender === 'Male') return 'Mezczyzna'
+  if (gender === 'Nonbinary') return 'Niebinarna'
+  if (gender === 'Other') return 'Inna'
   return 'Unknown'
 }
 
 function genderColor(gender: CharacterGender): string {
   if (gender === 'Female') return '#f7a4d4'
   if (gender === 'Male') return '#89b4fa'
+  if (gender === 'Nonbinary') return '#8be9fd'
+  if (gender === 'Other') return '#f9e2af'
   return C.textDim
 }
 
@@ -1131,6 +1162,7 @@ function LeftSidebar({
   assignmentSuggestions,
   onAssignCharacter,
   onClearCharacterAssignment,
+  onEditCharacter,
   activeDiskProjectTitle,
   loadedFileName,
 }: {
@@ -1161,6 +1193,7 @@ function LeftSidebar({
   assignmentSuggestions: CharacterAssignmentSuggestion[]
   onAssignCharacter: (characterName: string) => void
   onClearCharacterAssignment: () => void
+  onEditCharacter: (characterId: number) => void
   activeDiskProjectTitle: string
   loadedFileName: string
 }): React.ReactElement {
@@ -1210,6 +1243,7 @@ function LeftSidebar({
         suggestions={assignmentSuggestions}
         onAssignCharacter={onAssignCharacter}
         onClearAssignment={onClearCharacterAssignment}
+        onEditCharacter={onEditCharacter}
       />
 
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -2650,14 +2684,46 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         characterUserNotes: existing.profile.characterUserNotes.trim() || item.profile.characterUserNotes.trim() || '',
         speakingTraits: existing.profile.speakingTraits.trim() || item.profile.speakingTraits.trim() || '',
         characterNote: existing.profile.characterNote.trim() || item.profile.characterNote.trim() || '',
+        personalitySummary: existing.profile.personalitySummary.trim() || item.profile.personalitySummary.trim() || '',
         anilistDescription: existing.profile.anilistDescription.trim() || item.profile.anilistDescription.trim() || '',
+        mannerOfAddress: existing.profile.mannerOfAddress.trim() || item.profile.mannerOfAddress.trim() || '',
+        politenessLevel: existing.profile.politenessLevel.trim() || item.profile.politenessLevel.trim() || '',
+        vocabularyType: existing.profile.vocabularyType.trim() || item.profile.vocabularyType.trim() || '',
+        temperament: existing.profile.temperament.trim() || item.profile.temperament.trim() || '',
+        translationGender: existing.profile.translationGender !== 'unknown'
+          ? existing.profile.translationGender
+          : item.profile.translationGender,
+        speakingStyle: existing.profile.speakingStyle !== 'neutralny'
+          ? existing.profile.speakingStyle
+          : item.profile.speakingStyle,
+        toneProfile: existing.profile.toneProfile.trim() || item.profile.toneProfile.trim() || '',
+        personalityTraits: existing.profile.personalityTraits.length
+          ? existing.profile.personalityTraits
+          : item.profile.personalityTraits,
+        translationNotes: existing.profile.translationNotes.trim() || item.profile.translationNotes.trim() || '',
+        honorificPreference: existing.profile.honorificPreference.trim() || item.profile.honorificPreference.trim() || '',
+        formalityPreference: existing.profile.formalityPreference.trim() || item.profile.formalityPreference.trim() || '',
+        relationshipNotes: existing.profile.relationshipNotes.trim() || item.profile.relationshipNotes.trim() || '',
+        customPromptHint: existing.profile.customPromptHint.trim() || item.profile.customPromptHint.trim() || '',
+        isUserEdited: existing.profile.isUserEdited || item.profile.isUserEdited,
+        createdAt: existing.profile.createdAt || item.profile.createdAt,
+        updatedAt: existing.profile.updatedAt || item.profile.updatedAt,
+        sourceName: existing.profile.sourceName || item.profile.sourceName || '',
+        manualOverrides: {
+          ...(item.profile.manualOverrides ?? {}),
+          ...(existing.profile.manualOverrides ?? {}),
+        },
       }
       byKey.set(key, {
         ...existing,
         name: existing.name || item.name,
+        displayName: existing.displayName || item.displayName || existing.name || item.name,
+        originalName: existing.originalName || item.originalName || '',
         anilistCharacterId: existing.anilistCharacterId ?? item.anilistCharacterId ?? null,
         anilistRole: existing.anilistRole || item.anilistRole,
         imageUrl: existing.imageUrl || item.imageUrl || null,
+        avatarPath: existing.avatarPath || item.avatarPath || null,
+        avatarUrl: existing.avatarUrl || item.avatarUrl || null,
         gender: existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender,
         avatarColor: existing.avatarColor || item.avatarColor,
         style: existing.style ?? item.style ?? null,
@@ -2848,9 +2914,13 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         return {
           id: existing?.id ?? cast.id ?? numericIdFromName(cast.name),
           name: cast.name,
+          displayName: existing?.displayName ?? cast.name,
+          originalName: existing?.originalName ?? cast.name,
           anilistCharacterId: cast.id,
           anilistRole: cast.roleLabel,
           imageUrl: existing?.imageUrl ?? cast.imageUrl ?? null,
+          avatarPath: existing?.avatarPath ?? null,
+          avatarUrl: existing?.avatarUrl ?? cast.imageUrl ?? null,
           gender,
           avatarColor: existing?.avatarColor ?? cast.avatarColor ?? '#4f8ad6',
           style: existing?.style ?? cast.inferredStyle ?? null,
@@ -3763,6 +3833,7 @@ export default function App(): React.ReactElement {
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
   const [recentCharacterHistory, setRecentCharacterHistory] = useState<string[]>([])
   const [assignmentImageCacheByName, setAssignmentImageCacheByName] = useState<Record<string, string>>({})
+  const [editingCharacter, setEditingCharacter] = useState<CharacterStyleAssignment | null>(null)
   const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(true)
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
@@ -3950,7 +4021,10 @@ export default function App(): React.ReactElement {
       deduped.set(key, {
         id: character.id,
         name,
+        displayName: character.displayName || character.name,
         gender: character.gender,
+        translationGender: character.profile.translationGender,
+        speakingStyle: character.profile.speakingStyle,
         role: character.anilistRole,
         avatarColor: character.avatarColor,
         imageUrl: character.imageUrl || assignmentImageCacheByName[key] || null,
@@ -4086,7 +4160,11 @@ export default function App(): React.ReactElement {
       const appended = toAdd.map(name => ({
         id: localIdFromName(name),
         name,
+        displayName: name,
+        originalName: name,
         imageUrl: null,
+        avatarPath: null,
+        avatarUrl: null,
         gender: 'Unknown' as CharacterGender,
         avatarColor: '#4f8ad6',
         style: null,
@@ -4128,6 +4206,8 @@ export default function App(): React.ReactElement {
     return {
       characterName: resolvedCharacterName,
       gender,
+      translationGender: character?.profile.translationGender ?? 'unknown',
+      speakingStyle: character?.profile.speakingStyle ?? 'neutralny',
       effectiveStyle: effectiveStyle.style,
       effectiveStyleSource: effectiveStyle.source,
       archetype,
@@ -4141,6 +4221,13 @@ export default function App(): React.ReactElement {
       characterUserNotes: character?.profile.characterUserNotes?.trim() ?? '',
       speakingTraits: character?.profile.speakingTraits?.trim() ?? '',
       characterNote: character?.profile.characterNote?.trim() ?? '',
+      toneProfile: character?.profile.toneProfile?.trim() ?? '',
+      personalityTraits: character?.profile.personalityTraits ?? [],
+      translationNotes: character?.profile.translationNotes?.trim() ?? '',
+      relationshipNotes: character?.profile.relationshipNotes?.trim() ?? '',
+      honorificPreference: character?.profile.honorificPreference?.trim() ?? '',
+      formalityPreference: character?.profile.formalityPreference?.trim() ?? '',
+      customPromptHint: character?.profile.customPromptHint?.trim() ?? '',
       styleContext: resolvedCharacterName
         ? buildTranslationStyleContext(styleSettings, resolvedCharacterName, gender)
         : '',
@@ -4243,11 +4330,121 @@ export default function App(): React.ReactElement {
   }, [videoPath])
 
   const saveStyles = (next: ProjectTranslationStyleSettings): void => {
-    const payload = { ...next, projectId: currentProjectId }
+    const now = new Date().toISOString()
+    const payload = {
+      ...next,
+      projectId: currentProjectId,
+      updatedAt: now,
+      characters: next.characters.map(character => {
+        const profile = character.profile
+        const hasManualData = Boolean(
+          profile.characterTypeId
+          || profile.characterSubtypeId
+          || profile.characterUserNotes.trim()
+          || profile.speakingTraits.trim()
+          || profile.characterNote.trim()
+          || profile.personalitySummary.trim()
+          || profile.mannerOfAddress.trim()
+          || profile.politenessLevel.trim()
+          || profile.vocabularyType.trim()
+          || profile.temperament.trim()
+          || profile.translationNotes.trim()
+          || profile.relationshipNotes.trim()
+          || profile.customPromptHint.trim()
+          || profile.toneProfile.trim()
+          || profile.personalityTraits.length
+          || profile.translationGender !== 'unknown'
+          || profile.speakingStyle !== 'neutralny'
+        )
+        return {
+          ...character,
+          displayName: character.displayName?.trim() || character.name,
+          originalName: character.originalName ?? '',
+          profile: {
+            ...profile,
+            isUserEdited: profile.isUserEdited || hasManualData,
+            createdAt: profile.createdAt || now,
+            updatedAt: now,
+          },
+        }
+      }),
+    }
     setStyleSettings(payload)
     saveProjectStyleSettings(payload)
     upsertSeriesProjectMeta(currentProjectId, {})
     setCharactersOpen(false)
+  }
+
+  const updateEditedCharacterProfile = (
+    previousProfile: CharacterSpeechProfile,
+    patch: CharacterSpeechProfile,
+  ): CharacterSpeechProfile => {
+    const now = new Date().toISOString()
+    return {
+      ...patch,
+      isUserEdited: true,
+      updatedAt: now,
+      createdAt: previousProfile.createdAt || patch.createdAt || now,
+    }
+  }
+
+  const handleSaveCharacterEditor = (next: CharacterStyleAssignment): void => {
+    setStyleSettings(prev => {
+      const normalized = {
+        ...next,
+        displayName: next.displayName?.trim() || next.name,
+        originalName: next.originalName?.trim() || '',
+        profile: updateEditedCharacterProfile(
+          prev.characters.find(item => item.id === next.id)?.profile ?? next.profile,
+          next.profile,
+        ),
+      }
+      const payload: ProjectTranslationStyleSettings = {
+        ...prev,
+        updatedAt: new Date().toISOString(),
+        characters: prev.characters.map(item => (
+          item.id === next.id
+            ? normalized
+            : item
+        )),
+      }
+      saveProjectStyleSettings(payload)
+      return payload
+    })
+    setEditingCharacter(null)
+  }
+
+  const handleResetCharacterEditorToAuto = (characterId: number): void => {
+    setStyleSettings(prev => {
+      const payload: ProjectTranslationStyleSettings = {
+        ...prev,
+        updatedAt: new Date().toISOString(),
+        characters: prev.characters.map(item => (
+          item.id === characterId
+            ? {
+              ...item,
+              profile: {
+                ...item.profile,
+                translationGender: 'unknown',
+                speakingStyle: 'neutralny',
+                toneProfile: '',
+                translationNotes: '',
+                relationshipNotes: '',
+                customPromptHint: '',
+                personalityTraits: [],
+                honorificPreference: '',
+                formalityPreference: '',
+                isUserEdited: false,
+                manualOverrides: {},
+                updatedAt: new Date().toISOString(),
+              },
+            }
+            : item
+        )),
+      }
+      saveProjectStyleSettings(payload)
+      return payload
+    })
   }
 
   const handleProjectMetaUpdate = (meta: { title: string; anilistId: number | null }): void => {
@@ -4507,6 +4704,7 @@ export default function App(): React.ReactElement {
 
   const handleEnterProjectStep = (): void => {
     setActiveDiskProject(null)
+    setEditingCharacter(null)
     resetSubtitleWorkspaceState()
     setAssignmentImageCacheByName({})
     setActiveAssignmentCharacter('')
@@ -4929,6 +5127,8 @@ export default function App(): React.ReactElement {
     'Style priority: manual character fields (Krok 3) > user character notes (Krok 2) > character type/subtype > saved project fields > auto analysis > character gender > global style base.',
     context?.characterName ? `Character: ${context.characterName}` : '',
     context?.gender ? `Character gender: ${context.gender}` : '',
+    context?.translationGender ? `Translation grammatical gender: ${context.translationGender}` : '',
+    context?.speakingStyle ? `Declared speaking style: ${context.speakingStyle}` : '',
     context?.speakerModeTag ? `Speaker mode tag: ${context.speakerModeTag}` : '',
     context?.effectiveStyle ? `Active style: ${context.effectiveStyle} (${context.effectiveStyleSource})` : '',
     context?.effectiveStyle ? `Style directive: ${styleDirective(context.effectiveStyle)}` : '',
@@ -4955,6 +5155,13 @@ export default function App(): React.ReactElement {
     (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
     context?.characterNote ? `Character note to respect: ${context.characterNote}` : '',
+    context?.toneProfile ? `Tone profile: ${context.toneProfile}` : '',
+    context?.personalityTraits.length ? `Personality traits: ${context.personalityTraits.join(', ')}` : '',
+    context?.translationNotes ? `Translation notes: ${context.translationNotes}` : '',
+    context?.relationshipNotes ? `Relationship context: ${context.relationshipNotes}` : '',
+    context?.honorificPreference ? `Honorific preference: ${context.honorificPreference}` : '',
+    context?.formalityPreference ? `Formality preference: ${context.formalityPreference}` : '',
+    context?.customPromptHint ? `Manual prompt hint: ${context.customPromptHint}` : '',
     context?.styleContext ? `Style context:\n${context.styleContext}` : '',
   ].filter(Boolean).join('\n')
 
@@ -6381,6 +6588,10 @@ export default function App(): React.ReactElement {
           assignmentSuggestions={assignmentSuggestions}
           onAssignCharacter={applyCharacterToSelectedLines}
           onClearCharacterAssignment={clearCharacterFromSelectedLines}
+          onEditCharacter={(characterId) => {
+            const next = styleSettings.characters.find(item => item.id === characterId) ?? null
+            setEditingCharacter(next)
+          }}
           activeDiskProjectTitle={activeDiskProject?.title ?? 'brak (wymagany Krok 0)'}
           loadedFileName={loadedFileName}
         />
@@ -6413,6 +6624,15 @@ export default function App(): React.ReactElement {
           <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#171920', maxHeight: 62, overflow: 'auto' }}>
             Log tlumaczenia: {translationLogs[0] ?? 'brak'}
           </div>
+          {selectedCharacter && (
+            <div style={{ borderTop: `1px solid ${C.border}`, padding: '6px 8px', fontSize: 11, color: C.text, background: '#1a1d2b', display: 'grid', gap: 2 }}>
+              <div><strong style={{ color: C.accent }}>Postać:</strong> {selectedCharacter.displayName || selectedCharacter.name}</div>
+              <div>Płeć: <strong>{genderLabel(selectedCharacter.gender)}</strong> · Forma tłumaczenia: <strong>{selectedCharacter.profile.translationGender || 'unknown'}</strong></div>
+              <div>Styl mówienia: <strong>{selectedCharacter.profile.speakingStyle || 'neutralny'}</strong> · Cechy: <strong>{selectedCharacter.profile.personalityTraits.join(', ') || '-'}</strong></div>
+              <div>Notatki: <span style={{ color: C.textDim }}>{selectedCharacter.profile.translationNotes || selectedCharacter.profile.characterNote || '-'}</span></div>
+              <div>Prompt hint: <span style={{ color: C.textDim }}>{selectedCharacter.profile.customPromptHint || '-'}</span></div>
+            </div>
+          )}
           <EditorPanel row={selectedRow} onChangeTarget={handleChangeLineTarget} />
           <SuggestionsPanel
             row={selectedRow}
@@ -6478,6 +6698,13 @@ export default function App(): React.ReactElement {
         characters={styleSettings.characters}
         onClose={() => setGenderCorrectionOpen(false)}
         onApply={handleApplyGenderCorrections}
+      />
+      <CharacterProfileEditorModal
+        open={Boolean(editingCharacter)}
+        character={editingCharacter}
+        onClose={() => setEditingCharacter(null)}
+        onSave={handleSaveCharacterEditor}
+        onResetToAuto={handleResetCharacterEditorToAuto}
       />
       <ProjectStepZeroModal
         open={isProjectStepOpen}

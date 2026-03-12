@@ -1117,3 +1117,51 @@
   - renderer uruchamia sie poprawnie,
   - brak bledu "Cannot access before initialization",
   - funkcje identity resolvera z etapu v1.0.36 pozostaja aktywne.
+
+## 51) Character profile system hardening (Step 2/3 + persistent restore) (v1.0.38)
+- Cel etapu:
+  - domkniecie spójnego modelu profilu postaci i szybkiej edycji z UI,
+  - trwały zapis/odczyt nowych pol profilu po ponownym otwarciu projektu,
+  - czytelna ekspozycja profilu przy edycji linii (krok 3 kontekst tlumaczenia).
+- Zmiany architektoniczne:
+  - rozszerzono model profilu w `src/project/characterProfileModel.ts`:
+    - `translationGender`, `speakingStyle`, `toneProfile`, `personalityTraits`,
+    - `translationNotes`, `honorificPreference`, `formalityPreference`, `relationshipNotes`,
+    - `customPromptHint`, `isUserEdited`,
+    - metadane `createdAt`, `updatedAt`, `sourceName`,
+    - `manualOverrides` dla pol ustawionych recznie.
+  - rozszerzono model postaci (`CharacterStyleAssignment`) w `src/translationStyle.ts`:
+    - `displayName`, `originalName`, `avatarPath`, `avatarUrl`.
+  - mapper projektu (`src/project/projectMapper.ts`) zapisuje i odtwarza nowe pola:
+    - kompatybilnie z dotychczasowym schematem (`schemaVersion=1`) przez bezpieczne defaulty.
+  - warstwa electron persistence:
+    - `electron/projectStorage.ts` i `electron/preload.ts` przyjmuja nowe pola profilu.
+- UI:
+  - nowy modal szybkiej edycji: `src/components/CharacterProfileEditorModal.tsx`:
+    - pola: nazwa, nazwa oryginalna, plec, rodzaj tlumaczenia, styl mówienia,
+      cechy charakteru, ton, notatki tlumaczeniowe, relacje, prompt hint,
+    - akcje: `Zapisz`, `Anuluj`, `Resetuj do automatycznego wykrycia`.
+  - panel postaci po lewej (`src/components/CharacterAssignmentGrid.tsx`):
+    - pokazuje jawnie: `Płeć`, `Forma`, `Styl`,
+    - dodany przycisk `Edytuj` dla kazdej postaci.
+  - `src/App.tsx`:
+    - integracja edytora postaci z lewego panelu,
+    - zapis recznych zmian jako nadrzednych (`isUserEdited`, `updatedAt`),
+    - reset wybranych recznych ustawien do trybu auto,
+    - blok kontekstowy postaci przy edycji linii (widoczny profil dla kroku 3).
+- Pipeline tlumaczenia:
+  - `TranslationRequestContext` rozszerzony o:
+    - `translationGender`, `speakingStyle`, `toneProfile`, `personalityTraits`,
+      `translationNotes`, `relationshipNotes`, `honorificPreference`,
+      `formalityPreference`, `customPromptHint`.
+  - `buildSystemPrompt` uwzglednia nowe pola profilu jako kontekst stylu postaci.
+- Testy:
+  - `src/project/characterProfileModel.spec.ts`:
+    - default profile + normalizacja niekompletnych danych.
+  - `src/project/projectMapper.spec.ts`:
+    - serializacja/deserializacja rozszerzonego profilu,
+    - fallback migracyjny dla starszego payloadu bez nowych pol.
+- Status:
+  - nowe pola profilu sa trwale zapisywane i odtwarzane po ponownym otwarciu projektu,
+  - edycja z lewego panelu dziala bez naruszania obecnego flow przypisywania postaci,
+  - krok 3 dostaje jawniejszy kontekst postaci do wsparcia tlumaczenia.
