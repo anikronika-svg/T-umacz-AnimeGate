@@ -962,3 +962,25 @@
   - nowy handler `handleApplyBulkCharacterUserNotes`,
   - po zastosowaniu notatek kazda zmiana przechodzi przez `mergeCharacterNotesAnalysisIntoProfile`,
     wiec dalej zasila Krok 3 i prompt tlumaczenia tak samo jak reczne notatki.
+
+## 45) Translation QA Hardening – ETAP 1 (preprocessing + context) (v1.0.33)
+- Wydzielono sanitizacje tekstu do nowego modulu `src/project/subtitleTextSanitizer.ts`:
+  - `normalizeSemanticWhitespace` — normalizacja whitespace po oczyszczeniu tresci (spacje/newline/tab),
+  - `sanitizeTranslationChunk` — sanitizacja chunkow wysylanych do silnika z zachowaniem krawedziowych odstepow (bez psucia skladania przy tagach ASS).
+- Dodano nowy modul kontekstu `src/project/translationContextBuilder.ts`:
+  - `buildTranslationLineContextHints(rows, rowIndex)` zwraca:
+    - `previousLineContinuation` (np. poprzednia linia konczy sie przecinkiem/wielokropkiem),
+    - `nextLineHint` (gdy biezaca linia jest urwana i kolejna jest logicznym hintem).
+- `src/project/assTranslationPreprocessor.ts`:
+  - `buildContinuationContextFromPreviousLine` korzysta teraz z normalizacji semantycznego whitespace,
+    co stabilizuje kontekst po usunieciu `{...}` i `\\N`.
+- Integracja w pipeline (`src/App.tsx`):
+  - `translateSubtitleLinePreservingTags` tlumaczy juz zsanityzowane chunki (`sanitizeTranslationChunk`),
+  - `translateSingleRow` pobiera kontekst z `translationContextBuilder` (previous + opcjonalny next hint),
+  - prompt translacyjny otrzymuje dodatkowe instrukcje i `Next line hint` bez zmiany kontraktu round-trip ASS.
+- Testy regresji dodane:
+  - `src/project/subtitleTextSanitizer.spec.ts`,
+  - `src/project/translationContextBuilder.spec.ts`.
+- Istniejace testy preprocessingu ASS dalej przechodza (`assTranslationPreprocessor.spec.ts`), w tym przypadki:
+  - `\\Ncreate`, `\\NTino`, `{\\an8}Hello`, `{\\i1}Please{\\i0} wait`,
+  - oraz kontekst przecinka (`He was crying,` -> `quietly, alone.`).

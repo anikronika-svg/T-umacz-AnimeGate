@@ -1,4 +1,6 @@
-﻿export type SubtitleToken =
+﻿import { normalizeSemanticWhitespace } from './subtitleTextSanitizer'
+
+export type SubtitleToken =
   | { type: 'text'; value: string }
   | { type: 'tag'; value: string }
 
@@ -48,7 +50,7 @@ export function hasTranslatableAssText(value: string): boolean {
 }
 
 export function buildContinuationContextFromPreviousLine(previousLineRaw: string): string {
-  const semantic = stripAssFormattingForTranslation(previousLineRaw).trim()
+  const semantic = normalizeSemanticWhitespace(stripAssFormattingForTranslation(previousLineRaw))
   if (!semantic) return ''
   if (!CONTINUATION_END_PATTERN.test(semantic)) return ''
   const endsWithEllipsis = /(…|\.{3})\s*$/u.test(semantic)

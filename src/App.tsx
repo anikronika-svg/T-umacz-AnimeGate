@@ -52,13 +52,14 @@ import {
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import {
-  buildContinuationContextFromPreviousLine,
   hasAssTechnicalMarkers,
   hasTranslatableAssText,
   stripAssFormattingForTranslation,
   tokenizeAssForTranslation,
   type SubtitleToken as AssSubtitleToken,
 } from './project/assTranslationPreprocessor'
+import { sanitizeTranslationChunk } from './project/subtitleTextSanitizer'
+import { buildTranslationLineContextHints } from './project/translationContextBuilder'
 import { isNonTranslatableProperNounLine } from './project/translationHeuristics'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
@@ -221,6 +222,7 @@ interface TranslationRequestContext {
   characterNote: string
   styleContext: string
   previousLineContinuation: string
+  nextLineHint: string
 }
 
 type TranslatorFn = (
@@ -4111,6 +4113,7 @@ export default function App(): React.ReactElement {
         ? buildTranslationStyleContext(styleSettings, resolvedCharacterName, gender)
         : '',
       previousLineContinuation: '',
+      nextLineHint: '',
     }
   }
 
@@ -4888,6 +4891,10 @@ export default function App(): React.ReactElement {
       ? 'Sentence continuity: previous subtitle line ends with continuation punctuation. Treat current line as continuation of the same sentence.'
       : '',
     context?.previousLineContinuation ? `Previous line context: ${context.previousLineContinuation}` : '',
+    context?.nextLineHint
+      ? 'Hint: current line may be truncated and continue in the next subtitle. Use next line as semantic hint, but translate only current line.'
+      : '',
+    context?.nextLineHint ? `Next line hint: ${context.nextLineHint}` : '',
     (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
     context?.characterNote ? `Character note to respect: ${context.characterNote}` : '',
@@ -5210,7 +5217,8 @@ export default function App(): React.ReactElement {
         parts.push(token.value)
         continue
       }
-      const translatedChunk = await translator(token.value, source, target, signal, context)
+      const sanitizedChunk = sanitizeTranslationChunk(token.value)
+      const translatedChunk = await translator(sanitizedChunk, source, target, signal, context)
       if (!translatedChunk.trim()) {
         throw new ProviderError('empty-response', 'Silnik zwrocil pusty fragment tlumaczenia.')
       }
@@ -5231,13 +5239,14 @@ export default function App(): React.ReactElement {
       }
     }
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
-    const previousRow = rowIndex > 0 ? rowsData[rowIndex - 1] : null
-    const previousLineContinuation = previousRow
-      ? buildContinuationContextFromPreviousLine(previousRow.sourceRaw || previousRow.source)
-      : ''
+    const hints = buildTranslationLineContextHints(rowsData, rowIndex)
     const baseContext = getTranslationContextForRow(row)
-    const context = previousLineContinuation
-      ? { ...baseContext, previousLineContinuation }
+    const context = (hints.previousLineContinuation || hints.nextLineHint)
+      ? {
+        ...baseContext,
+        previousLineContinuation: hints.previousLineContinuation,
+        nextLineHint: hints.nextLineHint,
+      }
       : baseContext
     const controller = new AbortController()
     activeTranslationAbortRef.current = controller
@@ -5434,9 +5443,8 @@ export default function App(): React.ReactElement {
           const hasContextDependentRows = batchRows.some(row => {
             const rowIndex = rowIndexById.get(row.id) ?? -1
             if (rowIndex <= 0) return false
-            const previousRow = rowsSnapshot[rowIndex - 1]
-            if (!previousRow) return false
-            return buildContinuationContextFromPreviousLine(previousRow.sourceRaw || previousRow.source).length > 0
+            const hints = buildTranslationLineContextHints(rowsSnapshot, rowIndex)
+            return hints.previousLineContinuation.length > 0 || hints.nextLineHint.length > 0
           })
           const hasAssMarkers = batchRows.some(row => hasAssTechnicalMarkers(row.sourceRaw || row.source))
           const canUseBatch = !hasContextDependentRows
