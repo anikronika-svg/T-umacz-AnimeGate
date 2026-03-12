@@ -12,6 +12,7 @@ interface DetachedPreviewState {
 
 export function DetachedVideoPreviewWindow(): React.ReactElement {
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const previewAreaRef = useRef<HTMLDivElement | null>(null)
   const [state, setState] = useState<DetachedPreviewState>({
     videoSrc: null,
     currentTime: 0,
@@ -20,6 +21,46 @@ export function DetachedVideoPreviewWindow(): React.ReactElement {
     sourceText: '',
     targetText: '',
   })
+  const [videoFrame, setVideoFrame] = useState({ left: 0, top: 0, width: 0, height: 0 })
+
+  const updateVideoFrame = (): void => {
+    const area = previewAreaRef.current
+    const video = videoRef.current
+    if (!area) return
+    const containerWidth = area.clientWidth
+    const containerHeight = area.clientHeight
+    if (containerWidth <= 0 || containerHeight <= 0) return
+
+    const naturalWidth = video?.videoWidth ?? 0
+    const naturalHeight = video?.videoHeight ?? 0
+    if (naturalWidth <= 0 || naturalHeight <= 0) {
+      setVideoFrame({
+        left: 0,
+        top: 0,
+        width: containerWidth,
+        height: containerHeight,
+      })
+      return
+    }
+
+    const mediaAspect = naturalWidth / naturalHeight
+    const containerAspect = containerWidth / containerHeight
+    let width = containerWidth
+    let height = containerHeight
+    if (containerAspect > mediaAspect) {
+      width = containerHeight * mediaAspect
+      height = containerHeight
+    } else {
+      width = containerWidth
+      height = containerWidth / mediaAspect
+    }
+    setVideoFrame({
+      left: Math.max(0, (containerWidth - width) / 2),
+      top: Math.max(0, (containerHeight - height) / 2),
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+    })
+  }
 
   useEffect(() => {
     if (!window.electronAPI) return
@@ -62,6 +103,18 @@ export function DetachedVideoPreviewWindow(): React.ReactElement {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  useEffect(() => {
+    updateVideoFrame()
+  }, [state.videoSrc])
+
+  useEffect(() => {
+    const area = previewAreaRef.current
+    if (!area) return
+    const observer = new ResizeObserver(() => updateVideoFrame())
+    observer.observe(area)
+    return () => observer.disconnect()
+  }, [])
+
   const rootStyle = useMemo<React.CSSProperties>(() => ({
     display: 'flex',
     flexDirection: 'column',
@@ -90,12 +143,13 @@ export function DetachedVideoPreviewWindow(): React.ReactElement {
         </button>
       </div>
 
-      <div style={{ position: 'relative', flex: 1, minHeight: 0, background: '#000' }}>
+      <div ref={previewAreaRef} style={{ position: 'relative', flex: 1, minHeight: 0, background: '#000' }}>
         {state.videoSrc ? (
           <video
             ref={videoRef}
             src={state.videoSrc}
             style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+            onLoadedMetadata={updateVideoFrame}
             onClick={() => {
               void window.electronAPI?.requestDetachedPreviewTogglePlayback()
             }}
@@ -105,7 +159,19 @@ export function DetachedVideoPreviewWindow(): React.ReactElement {
             Brak zaladowanego wideo
           </div>
         )}
-        <VideoSubtitleOverlay sourceText={state.sourceText} targetText={state.targetText} />
+        <div
+          style={{
+            position: 'absolute',
+            left: videoFrame.left,
+            top: videoFrame.top,
+            width: videoFrame.width,
+            height: videoFrame.height,
+            overflow: 'hidden',
+            pointerEvents: 'none',
+          }}
+        >
+          <VideoSubtitleOverlay sourceText={state.sourceText} targetText={state.targetText} />
+        </div>
       </div>
     </div>
   )

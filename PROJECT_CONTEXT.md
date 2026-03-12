@@ -892,3 +892,20 @@
   - dodano `src/project/translationHeuristics.spec.ts` z przypadkami:
     - `Arena Rex!`, `Shadow Burst!`, `Tino!`, `Grand Palace` -> wykrywane,
     - normalne zdania -> niewykrywane.
+
+## 42) Fix layout: napisy zakotwiczone do obrazu w osobnym oknie preview (v1.0.30)
+- Problem:
+  - w oknie `Powiekszony podglad` napisy byly pozycjonowane wzgledem calego viewportu okna,
+    przez co przy malych rozmiarach mogly wypasc poza obszar obrazu (na czarne pasy).
+- Naprawa:
+  - `src/components/DetachedVideoPreviewWindow.tsx`:
+    - dodano referencje kontenera preview (`previewAreaRef`) i stan `videoFrame` (left/top/width/height),
+    - dodano wyliczanie rzeczywistego prostokata obrazu dla `object-fit: contain` na podstawie:
+      - rozmiaru kontenera,
+      - natywnego aspect ratio materialu (`videoWidth`/`videoHeight`),
+    - dodano `ResizeObserver`, aby po zmianie rozmiaru okna przeliczac obszar obrazu,
+    - overlay napisow renderowany jest teraz wewnatrz absolutnie pozycjonowanego wrappera o wymiarach `videoFrame`.
+- Efekt:
+  - napisy (gora/dol) sa zawsze osadzone na obrazie wideo,
+  - przy malym, srednim i duzym oknie pozostaja zakotwiczone i wycentrowane,
+  - skalowanie okna nie wypycha napisow poza obraz.
