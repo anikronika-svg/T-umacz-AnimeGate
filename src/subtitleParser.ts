@@ -273,7 +273,7 @@ export function buildAssOrSsaContent(
     const row = rowsById.get(entry.rowId)
     if (!row) return
 
-    const sourceRaw = (row.sourceRaw ?? entry.sourceTextRaw).trim()
+    const sourceRaw = row.sourceRaw ?? entry.sourceTextRaw
     const translatedRaw = toAssText(row.target.trim())
 
     if (entry.mode === 'paired' && entry.targetLineIndex !== undefined && entry.targetParts) {

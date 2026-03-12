@@ -61,6 +61,12 @@ import {
 import { sanitizeTranslationChunk } from './project/subtitleTextSanitizer'
 import { buildTranslationLineContextHints } from './project/translationContextBuilder'
 import { isNonTranslatableProperNounLine } from './project/translationHeuristics'
+import {
+  buildChunkContextHints,
+  isOverAggressiveShortLineRewrite,
+  isShortSubtitleUtterance,
+  stabilizeTonePunctuation,
+} from './project/translationQualityGuards'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -223,6 +229,9 @@ interface TranslationRequestContext {
   styleContext: string
   previousLineContinuation: string
   nextLineHint: string
+  isShortUtterance: boolean
+  chunkPreviousHint: string
+  chunkNextHint: string
 }
 
 type TranslatorFn = (
@@ -4114,6 +4123,9 @@ export default function App(): React.ReactElement {
         : '',
       previousLineContinuation: '',
       nextLineHint: '',
+      isShortUtterance: false,
+      chunkPreviousHint: '',
+      chunkNextHint: '',
     }
   }
 
@@ -4777,8 +4789,14 @@ export default function App(): React.ReactElement {
     if (formality) {
       body.set('formality', formality)
     }
-    if (context?.previousLineContinuation) {
-      body.set('context', `Previous subtitle line: ${context.previousLineContinuation}`)
+    const deepLContextLines = [
+      context?.previousLineContinuation ? `Previous subtitle line: ${context.previousLineContinuation}` : '',
+      context?.nextLineHint ? `Next subtitle hint: ${context.nextLineHint}` : '',
+      context?.chunkPreviousHint ? `Chunk previous hint: ${context.chunkPreviousHint}` : '',
+      context?.chunkNextHint ? `Chunk next hint: ${context.chunkNextHint}` : '',
+    ].filter(Boolean)
+    if (deepLContextLines.length > 0) {
+      body.set('context', deepLContextLines.join('\n'))
     }
     if (chosenSource && chosenSource.toLowerCase() !== 'auto') {
       body.set('source_lang', mapDeeplLang(chosenSource))
@@ -4895,6 +4913,12 @@ export default function App(): React.ReactElement {
       ? 'Hint: current line may be truncated and continue in the next subtitle. Use next line as semantic hint, but translate only current line.'
       : '',
     context?.nextLineHint ? `Next line hint: ${context.nextLineHint}` : '',
+    context?.chunkPreviousHint ? `Current chunk previous semantic hint: ${context.chunkPreviousHint}` : '',
+    context?.chunkNextHint ? `Current chunk next semantic hint: ${context.chunkNextHint}` : '',
+    context?.isShortUtterance
+      ? 'Short utterance guard: keep wording concise and close to the source intent. Do not over-expand short lines.'
+      : '',
+    'Anti-hallucination: use context only to resolve continuity and tone. Do not add new facts, names, actions, or explanations absent from the line.',
     (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
     context?.characterNote ? `Character note to respect: ${context.characterNote}` : '',
@@ -5208,7 +5232,8 @@ export default function App(): React.ReactElement {
     }
 
     const parts: string[] = []
-    for (const token of tokens) {
+    for (let tokenIndex = 0; tokenIndex < tokens.length; tokenIndex += 1) {
+      const token = tokens[tokenIndex]
       if (token.type === 'tag') {
         parts.push(token.value)
         continue
@@ -5218,7 +5243,15 @@ export default function App(): React.ReactElement {
         continue
       }
       const sanitizedChunk = sanitizeTranslationChunk(token.value)
-      const translatedChunk = await translator(sanitizedChunk, source, target, signal, context)
+      const chunkHints = buildChunkContextHints(tokens, tokenIndex)
+      const chunkContext = (chunkHints.previousChunkHint || chunkHints.nextChunkHint)
+        ? {
+          ...context,
+          chunkPreviousHint: chunkHints.previousChunkHint,
+          chunkNextHint: chunkHints.nextChunkHint,
+        }
+        : context
+      const translatedChunk = await translator(sanitizedChunk, source, target, signal, chunkContext)
       if (!translatedChunk.trim()) {
         throw new ProviderError('empty-response', 'Silnik zwrocil pusty fragment tlumaczenia.')
       }
@@ -5240,12 +5273,14 @@ export default function App(): React.ReactElement {
     }
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
     const hints = buildTranslationLineContextHints(rowsData, rowIndex)
+    const shortUtterance = isShortSubtitleUtterance(row.sourceRaw || row.source)
     const baseContext = getTranslationContextForRow(row)
-    const context = (hints.previousLineContinuation || hints.nextLineHint)
+    const context = (hints.previousLineContinuation || hints.nextLineHint || shortUtterance)
       ? {
         ...baseContext,
         previousLineContinuation: hints.previousLineContinuation,
         nextLineHint: hints.nextLineHint,
+        isShortUtterance: shortUtterance,
       }
       : baseContext
     const controller = new AbortController()
@@ -5341,10 +5376,15 @@ export default function App(): React.ReactElement {
     if (context.gender !== 'Unknown') {
       translated = applyGenderCorrectionLocally(translated, context.gender)
     }
+    translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
+    const requiresManualCheck = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
+    if (requiresManualCheck) {
+      appendTranslationLog(`Linia ${row.id}: zbyt agresywne przepisanie krótkiej kwestii — oznaczono do ręcznego sprawdzenia.`)
+    }
     if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
       appendTranslationLog(`Linia ${row.id}: wynik podejrzany (identyczny z oryginalem, ${sourceLang}->${targetLang})`)
     }
-    return { translated, requiresManualCheck: false }
+    return { translated, requiresManualCheck }
   }
 
   const testProviderConnection = async (provider: string): Promise<string> => {

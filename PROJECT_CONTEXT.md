@@ -984,3 +984,61 @@
 - Istniejace testy preprocessingu ASS dalej przechodza (`assTranslationPreprocessor.spec.ts`), w tym przypadki:
   - `\\Ncreate`, `\\NTino`, `{\\an8}Hello`, `{\\i1}Please{\\i0} wait`,
   - oraz kontekst przecinka (`He was crying,` -> `quietly, alone.`).
+
+## 46) Kontrola bezpieczenstwa ETAPU 1 + fix round-trip whitespace (v1.0.34)
+- Wykonano dodatkowa kontrole na realnych plikach ASS z repo:
+  - `basic.ass`,
+  - `tags.ass`,
+  - `newline.ass`,
+  - `tlmode.ass`,
+  - oraz dodatkowym scenariuszu inline (linie tylko z tagami, wielokrotne tagi, urwanie przecinkiem, wielokropek, niestandardowy whitespace).
+- Wynik kontroli:
+  - round-trip `parse -> serialize -> parse` zachowuje `sourceRaw`, `source`, liczbe wierszy i markery ASS (`\\N`, `{...}`).
+- Wykryty edge case:
+  - serializer przy zapisie przycinal `sourceRaw` przez `.trim()`, co moglo gubic skrajne spacje.
+- Naprawa:
+  - `src/subtitleParser.ts`:
+    - usunieto `.trim()` z zapisu `sourceRaw` (zachowanie wiernosci wejscia).
+  - `src/subtitleParser.spec.ts`:
+    - dodano regresje `preserves sourceRaw leading/trailing spaces and inner ASS tags`.
+  - rozszerzono regresje preprocessingu:
+    - `src/project/assTranslationPreprocessor.spec.ts` (linie tylko z tagami, niestandardowe spacje),
+    - `src/project/translationContextBuilder.spec.ts` (kontekst z tagami i nierownym whitespace).
+- Status:
+  - ETAP 1 po poprawce jest bezpieczny operacyjnie dla round-trip w obsluzonych wzorcach.
+  - Pozostajace ryzyka (do dalszej ochrony):
+    - nietypowe, niestandardowe dialekty ASS/SSA z egzotycznymi znacznikami,
+    - semantyka skrajnych odstepow celowo uzywanych jako efekt typograficzny.
+
+## 47) Translation QA Hardening – ETAP 2 (continuity + tone + short-line guard) (v1.0.34)
+- Dodano nowy modul `src/project/translationQualityGuards.ts`:
+  - `isShortSubtitleUtterance` — wykrywa krotkie kwestie wymagajace ostrozniejszego tlumaczenia,
+  - `buildChunkContextHints` — buduje kontekst semantyczny dla chunkow rozdzielonych tagami ASS,
+  - `stabilizeTonePunctuation` — stabilizuje koncowki `?` / `!`, by nie gubic tonu,
+  - `isOverAggressiveShortLineRewrite` — wykrywa nadmierne rozwijanie krotkich kwestii.
+- Integracja z pipeline (`src/App.tsx`):
+  - `TranslationRequestContext` rozszerzono o:
+    - `isShortUtterance`,
+    - `chunkPreviousHint`,
+    - `chunkNextHint`.
+  - Podczas translacji linii:
+    - wyliczany jest guard krotkiej kwestii,
+    - kazdy chunk tekstowy dostaje lokalne hinty poprzedni/nastepny chunk.
+  - Prompt systemowy dostal instrukcje:
+    - ciaglosc i ton bez halucynowania,
+    - short-line guard (bez agresywnego rozwijania),
+    - ograniczenie do tresci biezacej linii (kontekst tylko pomocniczy).
+  - DeepL `context` dostaje teraz polaczony kontekst:
+    - poprzednia linia,
+    - hint nastepnej linii,
+    - hinty chunkowe.
+  - Po translacji:
+    - stabilizacja tonu interpunkcja `?`/`!`,
+    - automatyczne oznaczanie `requiresManualCheck` przy nadmiernym rozwinięciu krotkiej kwestii.
+- Testy regresji:
+  - nowy plik `src/project/translationQualityGuards.spec.ts`,
+  - pokrycie:
+    - short-line detection,
+    - over-aggressive rewrite detection,
+    - punctuation tone stabilization,
+    - chunk context hints dla linii z tagami ASS.

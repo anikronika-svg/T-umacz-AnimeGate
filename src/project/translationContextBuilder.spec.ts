@@ -31,4 +31,14 @@ describe('translationContextBuilder', () => {
     const hints = buildTranslationLineContextHints(rows, 0)
     expect(hints.nextLineHint).toBe('Arena Rex!')
   })
+
+  it('keeps context continuity with ASS tags and uneven whitespace', () => {
+    const rows = [
+      { sourceRaw: '{\\an8}  He was crying,  ', source: 'He was crying,' },
+      { sourceRaw: '  quietly,   alone. ', source: 'quietly, alone.' },
+    ]
+
+    const hints = buildTranslationLineContextHints(rows, 1)
+    expect(hints.previousLineContinuation).toBe('He was crying,')
+  })
 })

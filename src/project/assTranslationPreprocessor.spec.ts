@@ -50,4 +50,16 @@ describe('assTranslationPreprocessor', () => {
     expect(buildContinuationContextFromPreviousLine('He was crying.')).toBe('')
     expect(buildContinuationContextFromPreviousLine('She looked away!')).toBe('')
   })
+
+  it('handles hard edge ASS marker lines without false translatable chunks', () => {
+    expect(hasTranslatableAssText('{\\an8}\\N{\\i1}{\\i0}')).toBe(false)
+    expect(stripAssFormattingForTranslation('{\\an8}\\N{\\i1}{\\i0}')).toBe(' ')
+    expect(tokenizeAssForTranslation('{\\an8}\\N{\\i1}{\\i0}').every(token => token.type === 'tag')).toBe(true)
+  })
+
+  it('normalizes continuation safely for lines with mixed tags and irregular whitespace', () => {
+    expect(stripAssFormattingForTranslation('{\\i1}Please{\\i0}   wait')).toBe('Please   wait')
+    expect(buildContinuationContextFromPreviousLine('{\\an8}  Even now,   ')).toBe('Even now,')
+    expect(buildContinuationContextFromPreviousLine('{\\an8}To chyba...')).toBe('To chyba...')
+  })
 })

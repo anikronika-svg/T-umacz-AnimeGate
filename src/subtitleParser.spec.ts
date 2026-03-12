@@ -76,4 +76,24 @@ describe('subtitleParser round-trip ASS', () => {
     expect(second.rows[0]?.sourceRaw).toBe(first.rows[0]?.sourceRaw)
     expect(second.rows[0]?.target).toBe(first.rows[0]?.target)
   })
+
+  it('preserves sourceRaw leading/trailing spaces and inner ASS tags', () => {
+    const content = [
+      '[Script Info]',
+      'Title: Space safety',
+      '',
+      '[V4+ Styles]',
+      'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+      'Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,1',
+      '',
+      '[Events]',
+      'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\\i1}  Please{\\i0}   wait  ',
+      'Dialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,He was crying,',
+      'Dialogue: 0,0:00:04.10,0:00:05.00,Default,,0,0,0,,  quietly,   alone.',
+    ].join('\n')
+
+    const { first, second } = roundTrip(content)
+    expect(first.rows.map(row => row.sourceRaw)).toEqual(second.rows.map(row => row.sourceRaw))
+  })
 })
