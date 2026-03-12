@@ -93,6 +93,7 @@ interface DiskProjectCharacter {
   name: string
   anilistCharacterId?: number | null
   anilistRole?: string
+  imageUrl?: string | null
   gender: string
   avatarColor: string
   style: string | null

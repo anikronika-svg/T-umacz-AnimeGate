@@ -6,6 +6,7 @@ import {
   type CharacterSpeechProfile,
   type ProjectGlobalStyleProfile,
 } from './project/characterProfileModel'
+import { resolveCharacterByName } from './project/characterNameMatching'
 
 export type CharacterGender = 'Male' | 'Female' | 'Unknown'
 
@@ -59,6 +60,7 @@ export interface CharacterStyleAssignment {
   name: string
   anilistCharacterId?: number | null
   anilistRole?: string
+  imageUrl?: string | null
   gender: CharacterGender
   avatarColor: string
   style: TranslationStyleId | null
@@ -186,6 +188,8 @@ function findCharacterByName(
 ): CharacterStyleAssignment | undefined {
   const exact = settings.characters.find(item => item.name === characterName)
   if (exact) return exact
+  const resolved = resolveCharacterByName(characterName, settings.characters, { preferKnownGender: true })
+  if (resolved) return resolved
   const normalized = normalizeCharacterNameForMatch(characterName)
   if (!normalized) return undefined
   return settings.characters.find(item => normalizeCharacterNameForMatch(item.name) === normalized)
@@ -262,6 +266,7 @@ export function loadProjectStyleSettings(
           const existing = parsedMap.get(base.id)
           return {
             ...base,
+            imageUrl: existing?.imageUrl ?? null,
             gender: existing?.gender ?? base.gender,
             style: existing?.style ?? null,
             profile: normalizeProfile(existing?.profile),
@@ -269,6 +274,7 @@ export function loadProjectStyleSettings(
         }),
         ...extraParsedCharacters.map(character => ({
           ...character,
+          imageUrl: character.imageUrl ?? null,
           profile: normalizeProfile(character.profile),
         })),
       ],

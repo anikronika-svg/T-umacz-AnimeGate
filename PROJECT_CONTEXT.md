@@ -751,3 +751,38 @@
 - Efekt:
   - `Wczytaj` poprawnie otwiera istniejacy projekt po wskazaniu pliku lub folderu,
   - aktywny projekt jest ustawiany i hydracja danych projektu uruchamia sie prawidlowo.
+
+## 37) Stabilizacja systemu postaci: obrazki + aliasy nazw + korekta `Unknown` (v1.0.25)
+- Naprawa obrazkow postaci po `Wczytaj` projektu:
+  - glowna przyczyna: URL obrazka nie byl trwale serializowany w danych projektu (`animegate-project.json`), a UI opieral sie glownie o lokalny cache.
+  - dodano `imageUrl` do modelu postaci:
+    - `src/translationStyle.ts` (`CharacterStyleAssignment`),
+    - `src/project/projectMapper.ts` (`DiskProjectCharacter` mapowanie app <-> disk),
+    - `electron/projectStorage.ts` i `electron/preload.ts` (typy IPC),
+    - `src/electron.d.ts` (typy renderera).
+  - odtworzenie cache obrazkow jest teraz scalane z danymi projektu:
+    - build cache z `styleSettings.characters[].imageUrl`,
+    - merge z lokalnym cache per-projekt (`charImageCacheKey`),
+    - fallback na inicjal tylko gdy realnie brak URL.
+- Usprawnione dopasowanie nazw postaci (alias matching):
+  - wydzielono nowy modul: `src/project/characterNameMatching.ts`.
+  - logika dopasowania obejmuje:
+    - pelna nazwe (znormalizowana),
+    - alias z tokenami,
+    - imie, nazwisko,
+    - odwrocona kolejnosc imie/nazwisko,
+    - dopasowanie po tokenach z preferencja postaci z rozpoznana plcia.
+  - podpiecie w kluczowych miejscach:
+    - `App.tsx` (`resolveCharacterForLineName`, normalizacja),
+    - `src/translationStyle.ts` (`findCharacterByName`),
+    - `src/project/assignmentMatching.ts` (normalizacja aliasow w restore przypisan).
+  - dodano testy jednostkowe aliasow:
+    - `src/project/characterNameMatching.spec.ts` (full name / first name / surname / reversed order).
+- Korekta plci `Unknown` (Krok 2) dopracowana pod szybka prace:
+  - dodano filtr `Tylko Unknown` / `Pokaz wszystkie`,
+  - dla kazdej postaci szybkie akcje jednym kliknieciem:
+    - `M` (Mezczyzna),
+    - `K` (Kobieta),
+    - `N` (Neutralna / bez zmiany),
+  - zmiana jest aktualizowana jednoczesnie w `workerCast` i `draft.characters`,
+  - dane zapisuja sie do projektu i wracaja po ponownym otwarciu.

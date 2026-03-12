@@ -1,3 +1,5 @@
+import { normalizeCharacterAlias } from './characterNameMatching'
+
 export interface ProjectLineAssignment {
   lineId: number
   rawCharacter: string
@@ -21,19 +23,6 @@ function normalizeForKey(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\{[^}]*\}/g, ' ')
     .replace(/\\N/gi, ' ')
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function normalizeCharacterAlias(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\[[^\]]*]/g, ' ')
-    .replace(/\{[^}]*\}/g, ' ')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()

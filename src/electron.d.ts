@@ -1,4 +1,4 @@
-﻿export {}
+export {}
 
 declare global {
   interface Window {
@@ -138,6 +138,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -169,6 +170,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -209,6 +211,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -236,6 +239,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -277,6 +281,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -304,6 +309,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -343,6 +349,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -370,6 +377,7 @@ declare global {
               name: string
               anilistCharacterId?: number | null
               anilistRole?: string
+              imageUrl?: string | null
               gender: string
               avatarColor: string
               style: string | null
@@ -398,5 +406,6 @@ declare global {
     }
   }
 }
+
 
 

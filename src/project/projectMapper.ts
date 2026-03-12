@@ -34,6 +34,7 @@ export interface DiskProjectCharacter {
   name: string
   anilistCharacterId?: number | null
   anilistRole?: string
+  imageUrl?: string | null
   gender: string
   avatarColor: string
   style: string | null
@@ -115,6 +116,7 @@ function mapCharacterToDisk(character: CharacterStyleAssignment): DiskProjectCha
     name: character.name,
     anilistCharacterId: character.anilistCharacterId ?? null,
     anilistRole: character.anilistRole,
+    imageUrl: character.imageUrl ?? null,
     gender: character.gender,
     avatarColor: character.avatarColor,
     style: character.style,
@@ -142,6 +144,7 @@ function mapDiskToCharacter(character: DiskProjectCharacter, fallbackId: number)
     name: character.name || `Character_${fallbackId}`,
     anilistCharacterId: character.anilistCharacterId ?? null,
     anilistRole: character.anilistRole,
+    imageUrl: character.imageUrl ?? null,
     gender: (character.gender as CharacterGender) || 'Unknown',
     avatarColor: character.avatarColor || '#4f8ad6',
     style: (character.style as TranslationStyleId | null) ?? null,

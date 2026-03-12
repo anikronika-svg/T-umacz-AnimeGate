@@ -43,6 +43,12 @@ import {
   buildCharacterAssignmentSuggestions,
   type CharacterAssignmentSuggestion,
 } from './project/characterAssignmentSuggestions'
+import {
+  normalizeCharacterAlias as normalizeCharacterAliasByRules,
+  normalizeCharacterName as normalizeCharacterNameByRules,
+  resolveCharacterByName,
+  stripCharacterTechnicalMetadata,
+} from './project/characterNameMatching'
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import { CharacterNotesModal } from './components/CharacterNotesModal'
@@ -729,75 +735,25 @@ function genderColor(gender: CharacterGender): string {
   return C.textDim
 }
 
-const TECHNICAL_CHARACTER_SUFFIXES = new Set([
-  'm',
-  'f',
-  'male',
-  'female',
-  'whisper',
-  'whispers',
-  'thought',
-  'thinks',
-  'thinking',
-  'monologue',
-  'narration',
-  'narrator',
-  'inner',
-  'voice',
-  'off',
-  'bg',
-  'sfx',
-  'echo',
-  'flashback',
-  'memory',
-  'mysli',
-  'mysl',
-  'szept',
-  'szeptem',
-  'monolog',
-  'narracja',
-])
-
-function stripCharacterTechnicalMetadata(value: string): string {
-  const withoutBrackets = value
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\[[^\]]*]/g, ' ')
-    .replace(/\{[^}]*\}/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!withoutBrackets) return ''
-
-  const words = withoutBrackets.split(' ').filter(Boolean)
-  while (words.length > 1) {
-    const last = words[words.length - 1]
-      .toLowerCase()
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]/g, '')
-    if (!TECHNICAL_CHARACTER_SUFFIXES.has(last)) break
-    words.pop()
-  }
-
-  return words.join(' ').trim()
-}
-
 function normalizeCharacterName(value: string): string {
-  return stripCharacterTechnicalMetadata(value)
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '')
+  return normalizeCharacterNameByRules(value)
 }
 
 function normalizeCharacterAlias(value: string): string {
-  return stripCharacterTechnicalMetadata(value)
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  return normalizeCharacterAliasByRules(value)
+}
+
+function buildImageCacheFromCharacters(
+  characters: Array<{ name: string; imageUrl?: string | null }>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  characters.forEach(character => {
+    const key = normalizeCharacterName(character.name)
+    const imageUrl = character.imageUrl?.trim() ?? ''
+    if (!key || !imageUrl) return
+    out[key] = imageUrl
+  })
+  return out
 }
 
 function resolveGenderForCharacterName(
@@ -812,28 +768,8 @@ function resolveCharacterForLineName<T extends { name: string; gender: Character
   characterName: string,
   characters: T[],
 ): T | null {
-  const trimmed = characterName.trim()
-  if (!trimmed) return null
-  const normalized = normalizeCharacterName(trimmed)
-  const alias = normalizeCharacterAlias(trimmed)
-
-  const exact = characters.find(character => normalizeCharacterName(character.name) === normalized)
-  if (exact && exact.gender !== 'Unknown') return exact
-
-  // Fallback: dopasowanie skrótu imienia do pełnej nazwy postaci (np. "Tino" -> "Tino Shade")
-  const fuzzy = characters.filter(character => {
-    if (character.gender === 'Unknown') return false
-    const candidateAlias = normalizeCharacterAlias(character.name)
-    if (!candidateAlias) return false
-    return candidateAlias === alias
-      || candidateAlias.startsWith(`${alias} `)
-      || candidateAlias.includes(` ${alias} `)
-      || alias.startsWith(`${candidateAlias} `)
-  })
-
-  if (fuzzy.length === 1) return fuzzy[0]
-  if (exact) return exact
-  return null
+  return resolveCharacterByName(characterName, characters, { preferKnownGender: true })
+    ?? resolveCharacterByName(characterName, characters)
 }
 
 function numericIdFromName(seed: string): number {
@@ -2667,6 +2603,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<number>>(new Set())
   const [imageCacheByName, setImageCacheByName] = useState<Record<string, string>>({})
   const [brokenImageKeys, setBrokenImageKeys] = useState<Set<string>>(new Set())
+  const [step2ShowUnknownOnly, setStep2ShowUnknownOnly] = useState(true)
   // step3Unlocked: true tylko po jawnym kliknieciu "Przejdz do Kroku 3" z Kroku 2
   const [step3Unlocked, setStep3Unlocked] = useState(false)
   const wasOpenRef = useRef(false)
@@ -2731,6 +2668,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         name: existing.name || item.name,
         anilistCharacterId: existing.anilistCharacterId ?? item.anilistCharacterId ?? null,
         anilistRole: existing.anilistRole || item.anilistRole,
+        imageUrl: existing.imageUrl || item.imageUrl || null,
         gender: existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender,
         avatarColor: existing.avatarColor || item.avatarColor,
         style: existing.style ?? item.style ?? null,
@@ -2768,12 +2706,15 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       setSelectedAniCastIds(new Set())
       setSelectedWorkerIds(new Set())
       setBrokenImageKeys(new Set())
+      setStep2ShowUnknownOnly(true)
       setStep3Unlocked(false)
+      const fromSettings = buildImageCacheFromCharacters(settings.characters)
       try {
         const raw = localStorage.getItem(charImageCacheKey(projectId))
-        setImageCacheByName(raw ? (JSON.parse(raw) as Record<string, string>) : {})
+        const fromStorage = raw ? (JSON.parse(raw) as Record<string, string>) : {}
+        setImageCacheByName({ ...fromSettings, ...fromStorage })
       } catch {
-        setImageCacheByName({})
+        setImageCacheByName(fromSettings)
       }
       // Keep persisted project data in draft/settings only.
       // Worker cast on Step 1 is a temporary session state and starts empty.
@@ -2785,6 +2726,36 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
   useEffect(() => {
     localStorage.setItem(charImageCacheKey(projectId), JSON.stringify(imageCacheByName))
   }, [imageCacheByName, projectId])
+
+  const applyGenderForCharacter = (characterName: string, gender: CharacterGender): void => {
+    const key = normalizeCharacterName(characterName)
+    setWorkerCast(prev => prev.map(cast => (
+      normalizeCharacterName(cast.name) === key
+        ? { ...cast, gender }
+        : cast
+    )))
+    setDraft(prev => ({
+      ...prev,
+      characters: prev.characters.map(character => (
+        normalizeCharacterName(character.name) === key
+          ? { ...character, gender }
+          : character
+      )),
+    }))
+  }
+
+  const step2CastRows = useMemo(
+    () => (
+      step2ShowUnknownOnly
+        ? workerCast.filter(item => {
+          const current = draft.characters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.name))
+          const effectiveGender = current?.gender ?? item.gender
+          return effectiveGender === 'Unknown'
+        })
+        : workerCast
+    ),
+    [workerCast, draft.characters, step2ShowUnknownOnly],
+  )
 
   const detectedCharacters = useMemo(() => {
     const byName = new Map<string, { name: string; lineCount: number }>()
@@ -2890,6 +2861,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
           name: cast.name,
           anilistCharacterId: cast.id,
           anilistRole: cast.roleLabel,
+          imageUrl: existing?.imageUrl ?? cast.imageUrl ?? null,
           gender,
           avatarColor: existing?.avatarColor ?? cast.avatarColor ?? '#4f8ad6',
           style: existing?.style ?? cast.inferredStyle ?? null,
@@ -3234,6 +3206,19 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                 Program bierze gotowa liste postaci z Kroku 1 i uzupelnia dane automatycznie.
                 Tam, gdzie nie ma pewnosci, zostaje <strong>Unknown</strong>.
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: C.textDim }}>
+                  Unknown: {step2CastRows.length} / {workerCast.length}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    style={{ ...BASE_BTN, height: 26, background: step2ShowUnknownOnly ? '#2d4b7d' : '#383a52', borderColor: step2ShowUnknownOnly ? '#3f7ed2' : C.border }}
+                    onClick={() => setStep2ShowUnknownOnly(prev => !prev)}
+                  >
+                    {step2ShowUnknownOnly ? 'Pokaz wszystkie' : 'Tylko Unknown'}
+                  </button>
+                </div>
+              </div>
               <div style={{ border: `1px solid ${C.border}`, background: '#222432' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '42px 1fr 110px 130px 130px', gap: 8, padding: '6px 8px', fontSize: 11, color: C.textDim, borderBottom: `1px solid ${C.border}` }}>
                   <span>#</span>
@@ -3243,8 +3228,8 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   <span>Plec</span>
                 </div>
                 <div style={{ maxHeight: 360, overflow: 'auto' }}>
-                  {workerCast.map((item, index) => {
-                    const current = draft.characters.find(character => character.name === item.name) ?? item
+                  {step2CastRows.map((item, index) => {
+                    const current = draft.characters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.name)) ?? item
                     const lineCount = detectedCharacters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.name))?.lineCount ?? 0
                     return (
                       <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '42px 1fr 110px 130px 130px', gap: 8, padding: '6px 8px', borderBottom: `1px solid ${C.borderB}`, alignItems: 'center' }}>
@@ -3252,32 +3237,52 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                         <span style={{ fontSize: 12 }}>{item.name}</span>
                         <span style={{ fontSize: 11, color: C.textDim }}>{lineCount}</span>
                         <span style={{ fontSize: 11, color: genderColor(item.gender) }}>{genderLabel(item.gender)}</span>
-                        <select
-                          value={current.gender ?? 'Unknown'}
-                          onChange={e => {
-                            const gender = e.currentTarget.value as CharacterGender
-                            setWorkerCast(prev => prev.map(cast => cast.id === item.id ? { ...cast, gender } : cast))
-                            setDraft(prev => ({
-                              ...prev,
-                              characters: prev.characters.map(character => (
-                                character.name === item.name
-                                  ? { ...character, gender }
-                                  : character
-                              )),
-                            }))
-                          }}
-                          style={{ height: 24, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 11 }}
-                        >
-                          <option value="Female">Female</option>
-                          <option value="Male">Male</option>
-                          <option value="Unknown">Unknown</option>
-                        </select>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                          <button
+                            style={{
+                              ...BASE_BTN,
+                              height: 24,
+                              padding: 0,
+                              background: current.gender === 'Male' ? '#2d4b7d' : '#383a52',
+                              borderColor: current.gender === 'Male' ? '#3f7ed2' : C.border,
+                            }}
+                            onClick={() => applyGenderForCharacter(item.name, 'Male')}
+                          >
+                            M
+                          </button>
+                          <button
+                            style={{
+                              ...BASE_BTN,
+                              height: 24,
+                              padding: 0,
+                              background: current.gender === 'Female' ? '#2d4b7d' : '#383a52',
+                              borderColor: current.gender === 'Female' ? '#3f7ed2' : C.border,
+                            }}
+                            onClick={() => applyGenderForCharacter(item.name, 'Female')}
+                          >
+                            K
+                          </button>
+                          <button
+                            style={{
+                              ...BASE_BTN,
+                              height: 24,
+                              padding: 0,
+                              background: current.gender === 'Unknown' ? '#2d4b7d' : '#383a52',
+                              borderColor: current.gender === 'Unknown' ? '#3f7ed2' : C.border,
+                            }}
+                            onClick={() => applyGenderForCharacter(item.name, 'Unknown')}
+                          >
+                            N
+                          </button>
+                        </div>
                       </div>
                     )
                   })}
-                  {workerCast.length === 0 && (
+                  {step2CastRows.length === 0 && (
                     <div style={{ padding: 10, color: C.textDim, fontSize: 12 }}>
-                      Brak bazy postaci. Wroc do Kroku 1 i dodaj postacie z AniList.
+                      {workerCast.length === 0
+                        ? 'Brak bazy postaci. Wroc do Kroku 1 i dodaj postacie z AniList.'
+                        : 'Brak postaci z Unknown dla aktualnego filtra.'}
                     </div>
                   )}
                 </div>
@@ -3329,7 +3334,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                     {(() => {
                       const key = normalizeCharacterName(character.name)
                       const imageFromWorker = workerCast.find(item => normalizeCharacterName(item.name) === key)?.imageUrl ?? null
-                      const imageUrl = imageFromWorker || imageCacheByName[key] || null
+                      const imageUrl = imageFromWorker || character.imageUrl || imageCacheByName[key] || null
                       const broken = brokenImageKeys.has(key)
                       return (
                         <div style={{ height: 78, border: `1px solid ${C.borderB}`, background: '#151722', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -3890,12 +3895,13 @@ export default function App(): React.ReactElement {
   }, [])
 
   useEffect(() => {
+    const fromSettings = buildImageCacheFromCharacters(styleSettings.characters)
     try {
       const raw = localStorage.getItem(charImageCacheKey(currentProjectId))
       const parsed = raw ? (JSON.parse(raw) as Record<string, string>) : {}
-      setAssignmentImageCacheByName(parsed)
+      setAssignmentImageCacheByName({ ...fromSettings, ...parsed })
     } catch {
-      setAssignmentImageCacheByName({})
+      setAssignmentImageCacheByName(fromSettings)
     }
   }, [currentProjectId, styleSettings.updatedAt])
 
@@ -3913,7 +3919,7 @@ export default function App(): React.ReactElement {
         gender: character.gender,
         role: character.anilistRole,
         avatarColor: character.avatarColor,
-        imageUrl: assignmentImageCacheByName[key] || null,
+        imageUrl: character.imageUrl || assignmentImageCacheByName[key] || null,
       })
     })
     return [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl', { sensitivity: 'base' }))
@@ -4027,6 +4033,7 @@ export default function App(): React.ReactElement {
       const appended = toAdd.map(name => ({
         id: localIdFromName(name),
         name,
+        imageUrl: null,
         gender: 'Unknown' as CharacterGender,
         avatarColor: '#4f8ad6',
         style: null,
