@@ -153,6 +153,15 @@ interface UpdaterStatusPayload {
   error?: string
 }
 
+interface DetachedPreviewState {
+  videoSrc: string | null
+  currentTime: number
+  playbackRate: number
+  paused: boolean
+  sourceText: string
+  targetText: string
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   openSubtitleFile: (args?: OpenSubtitleArgs): Promise<OpenSubtitleResult> =>
     ipcRenderer.invoke('file:openSubtitle', args),
@@ -202,4 +211,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('project:open', projectPath),
   saveProjectConfig: (args: { projectDir: string; config: DiskProjectConfigV1 }): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
     ipcRenderer.invoke('project:saveConfig', args),
+  openDetachedPreviewWindow: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('preview:openWindow'),
+  closeDetachedPreviewWindow: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('preview:closeWindow'),
+  updateDetachedPreviewState: (state: Partial<DetachedPreviewState>): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('preview:updateState', state),
+  getDetachedPreviewState: (): Promise<DetachedPreviewState> =>
+    ipcRenderer.invoke('preview:getState'),
+  requestDetachedPreviewTogglePlayback: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('preview:togglePlayback'),
+  onDetachedPreviewState: (callback: (state: DetachedPreviewState) => void): (() => void) => {
+    const listener = (_event: unknown, state: DetachedPreviewState): void => {
+      callback(state)
+    }
+    ipcRenderer.on('preview:state', listener)
+    return () => {
+      ipcRenderer.removeListener('preview:state', listener)
+    }
+  },
+  onDetachedPreviewCommand: (callback: (payload: { type: 'toggle-playback' }) => void): (() => void) => {
+    const listener = (_event: unknown, payload: { type: 'toggle-playback' }): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('preview:command', listener)
+    return () => {
+      ipcRenderer.removeListener('preview:command', listener)
+    }
+  },
 })

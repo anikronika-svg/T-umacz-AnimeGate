@@ -28,4 +28,27 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     createProject: (args) => electron_1.ipcRenderer.invoke('project:create', args),
     openProject: (projectPath) => electron_1.ipcRenderer.invoke('project:open', projectPath),
     saveProjectConfig: (args) => electron_1.ipcRenderer.invoke('project:saveConfig', args),
+    openDetachedPreviewWindow: () => electron_1.ipcRenderer.invoke('preview:openWindow'),
+    closeDetachedPreviewWindow: () => electron_1.ipcRenderer.invoke('preview:closeWindow'),
+    updateDetachedPreviewState: (state) => electron_1.ipcRenderer.invoke('preview:updateState', state),
+    getDetachedPreviewState: () => electron_1.ipcRenderer.invoke('preview:getState'),
+    requestDetachedPreviewTogglePlayback: () => electron_1.ipcRenderer.invoke('preview:togglePlayback'),
+    onDetachedPreviewState: (callback) => {
+        const listener = (_event, state) => {
+            callback(state);
+        };
+        electron_1.ipcRenderer.on('preview:state', listener);
+        return () => {
+            electron_1.ipcRenderer.removeListener('preview:state', listener);
+        };
+    },
+    onDetachedPreviewCommand: (callback) => {
+        const listener = (_event, payload) => {
+            callback(payload);
+        };
+        electron_1.ipcRenderer.on('preview:command', listener);
+        return () => {
+            electron_1.ipcRenderer.removeListener('preview:command', listener);
+        };
+    },
 });

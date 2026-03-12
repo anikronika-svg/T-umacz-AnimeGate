@@ -56,7 +56,6 @@ import {
   CharacterAssignmentGrid,
   type CharacterAssignmentGridItem,
 } from './components/CharacterAssignmentGrid'
-import { FloatingVideoPreview } from './components/FloatingVideoPreview'
 
 const C = {
   bg0: '#1e1e2e',
@@ -3680,11 +3679,11 @@ export default function App(): React.ReactElement {
   const [postRollSec, setPostRollSec] = useState(initialVideoConfig.postRollSec)
   const [videoCurrentTime, setVideoCurrentTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
+  const [videoPaused, setVideoPaused] = useState(true)
   const [videoVolume, setVideoVolume] = useState(1)
   const [videoMuted, setVideoMuted] = useState(false)
   const [videoPlaybackRate, setVideoPlaybackRate] = useState(1)
   const [videoError, setVideoError] = useState('')
-  const [isExpandedVideoOpen, setExpandedVideoOpen] = useState(false)
   const [waveformData, setWaveformData] = useState<WaveformData | null>(null)
   const [waveformLoading, setWaveformLoading] = useState(false)
   const [waveformError, setWaveformError] = useState('')
@@ -3725,7 +3724,6 @@ export default function App(): React.ReactElement {
   const providerCooldownUntilRef = useRef<number>(0)
   const rowsDataRef = useRef<DialogRow[]>(rowsData)
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const expandedVideoRef = useRef<HTMLVideoElement | null>(null)
   const lastLineSyncFromVideoRef = useRef<number | null>(null)
   const pauseAtAfterLineRef = useRef<number | null>(null)
   const hydratedProjectIdRef = useRef<string | null>(null)
@@ -3883,6 +3881,8 @@ export default function App(): React.ReactElement {
   }, [activeDiskProject, currentProjectId, styleSettings.updatedAt])
 
   const selectedRow = rowsData.find(row => row.id === selectedId)
+  const detachedPreviewSourceText = stripAssFormatting(selectedRow?.sourceRaw ?? selectedRow?.source ?? '').trim()
+  const detachedPreviewTargetText = stripAssFormatting(selectedRow?.target ?? '').trim()
   const assignmentCharacters = useMemo<CharacterAssignmentGridItem[]>(() => {
     if (!activeDiskProject) return []
     const deduped = new Map<string, CharacterAssignmentGridItem>()
@@ -4125,22 +4125,6 @@ export default function App(): React.ReactElement {
     video.muted = videoMuted
     video.playbackRate = videoPlaybackRate
   }, [videoVolume, videoMuted, videoPlaybackRate, videoSrc])
-
-  useEffect(() => {
-    const primary = videoRef.current
-    const expanded = expandedVideoRef.current
-    if (!primary || !expanded || !isExpandedVideoOpen) return
-    expanded.muted = true
-    expanded.playbackRate = primary.playbackRate
-    if (Math.abs(expanded.currentTime - primary.currentTime) > 0.22) {
-      expanded.currentTime = primary.currentTime
-    }
-    if (!primary.paused && expanded.paused) {
-      void expanded.play().catch(() => undefined)
-    } else if (primary.paused && !expanded.paused) {
-      expanded.pause()
-    }
-  }, [isExpandedVideoOpen, videoCurrentTime, videoPlaybackRate, videoSrc])
 
   useEffect(() => {
     if (!videoPath || !window.electronAPI?.getVideoWaveform) {
@@ -5851,6 +5835,7 @@ export default function App(): React.ReactElement {
     if (!video) return
     setVideoDuration(Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0)
     setVideoCurrentTime(Number.isFinite(video.currentTime) ? video.currentTime : 0)
+    setVideoPaused(video.paused)
     setVideoError('')
   }
 
@@ -5867,6 +5852,7 @@ export default function App(): React.ReactElement {
     if (!video) return
     const now = video.currentTime
     setVideoCurrentTime(now)
+    setVideoPaused(video.paused)
 
     if (pauseAtAfterLineRef.current !== null && now >= pauseAtAfterLineRef.current) {
       video.pause()
@@ -5895,10 +5881,42 @@ export default function App(): React.ReactElement {
         const message = error instanceof Error ? error.message : 'Nieznany blad play()'
         setVideoError(`Nie mozna uruchomic odtwarzania: ${message}`)
       })
+      setVideoPaused(false)
       return
     }
     video.pause()
+    setVideoPaused(true)
   }
+
+  useEffect(() => {
+    if (!window.electronAPI?.updateDetachedPreviewState) return
+    const video = videoRef.current
+    void window.electronAPI.updateDetachedPreviewState({
+      videoSrc,
+      currentTime: videoCurrentTime,
+      playbackRate: videoPlaybackRate,
+      paused: video?.paused ?? videoPaused,
+      sourceText: detachedPreviewSourceText,
+      targetText: detachedPreviewTargetText,
+    })
+  }, [
+    videoSrc,
+    videoCurrentTime,
+    videoPlaybackRate,
+    videoPaused,
+    detachedPreviewSourceText,
+    detachedPreviewTargetText,
+  ])
+
+  useEffect(() => {
+    if (!window.electronAPI?.onDetachedPreviewCommand) return
+    const unsubscribe = window.electronAPI.onDetachedPreviewCommand(payload => {
+      if (payload.type === 'toggle-playback') {
+        handleVideoPlayPause()
+      }
+    })
+    return unsubscribe
+  }, [])
 
   const handleVideoStop = (): void => {
     const video = videoRef.current
@@ -6061,14 +6079,7 @@ export default function App(): React.ReactElement {
       event.preventDefault()
       const video = videoRef.current
       if (!video || !videoSrc) return
-      if (video.paused) {
-        void video.play().catch(error => {
-          const message = error instanceof Error ? error.message : 'Nieznany blad play()'
-          setVideoError(`Nie mozna uruchomic odtwarzania: ${message}`)
-        })
-      } else {
-        video.pause()
-      }
+      handleVideoPlayPause()
     }
 
     window.addEventListener('keydown', handleGlobalSpace)
@@ -6142,7 +6153,9 @@ export default function App(): React.ReactElement {
           onDurationChange={handleVideoDurationChange}
           onTimeUpdate={handleVideoTimeUpdate}
           onVideoError={handleVideoError}
-          onToggleVideoExpanded={() => setExpandedVideoOpen(true)}
+          onToggleVideoExpanded={() => {
+            void window.electronAPI?.openDetachedPreviewWindow?.()
+          }}
           projectOptions={seriesProjects}
           currentProjectId={projectPickerId}
           onSelectProjectId={setProjectPickerId}
@@ -6207,16 +6220,6 @@ export default function App(): React.ReactElement {
           />
         </div>
       </div>
-
-      <FloatingVideoPreview
-        open={isExpandedVideoOpen}
-        videoRef={expandedVideoRef}
-        videoSrc={videoSrc}
-        sourceText={stripAssFormatting(selectedRow?.sourceRaw ?? selectedRow?.source ?? '').trim()}
-        targetText={stripAssFormatting(selectedRow?.target ?? '').trim()}
-        onClose={() => setExpandedVideoOpen(false)}
-        onTogglePlayPause={handleVideoPlayPause}
-      />
 
       <ApiModal
         open={isApiOpen}

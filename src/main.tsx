@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import './index.css'
 import App from './App'
 import { StartupErrorBoundary } from './StartupErrorBoundary'
+import { DetachedVideoPreviewWindow } from './components/DetachedVideoPreviewWindow'
 
 function escapeHtml(value: string): string {
   return value
@@ -43,10 +44,12 @@ window.addEventListener('unhandledrejection', event => {
   renderFatalStartupError('window.unhandledrejection', reason)
 })
 
+const isDetachedPreviewRoute = window.location.hash === '#video-preview'
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <StartupErrorBoundary>
-      <App />
+      {isDetachedPreviewRoute ? <DetachedVideoPreviewWindow /> : <App />}
     </StartupErrorBoundary>
   </React.StrictMode>
 )

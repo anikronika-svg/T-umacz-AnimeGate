@@ -20,6 +20,23 @@ import {
 } from './projectStorage'
 
 const OPEN_STATE_FILE = 'open-state.json'
+const PREVIEW_WINDOW_STATE_FILE = 'preview-window-state.json'
+
+interface DetachedPreviewState {
+  videoSrc: string | null
+  currentTime: number
+  playbackRate: number
+  paused: boolean
+  sourceText: string
+  targetText: string
+}
+
+interface PreviewWindowBounds {
+  x?: number
+  y?: number
+  width: number
+  height: number
+}
 
 interface OpenSubtitleArgs {
   projectDir?: string
@@ -93,6 +110,10 @@ function getOpenStatePath(): string {
   return path.join(app.getPath('userData'), OPEN_STATE_FILE)
 }
 
+function getPreviewWindowStatePath(): string {
+  return path.join(app.getPath('userData'), PREVIEW_WINDOW_STATE_FILE)
+}
+
 function getApiConfigPath(): string {
   return path.join(app.getPath('userData'), 'api-config.json')
 }
@@ -107,6 +128,43 @@ function getStartupLogPath(): string {
   } catch {
     return path.join(process.cwd(), STARTUP_LOG_FILE)
   }
+}
+
+let mainWindow: BrowserWindow | null = null
+let previewWindow: BrowserWindow | null = null
+let detachedPreviewState: DetachedPreviewState = {
+  videoSrc: null,
+  currentTime: 0,
+  playbackRate: 1,
+  paused: true,
+  sourceText: '',
+  targetText: '',
+}
+
+async function readPreviewWindowBounds(): Promise<PreviewWindowBounds | null> {
+  try {
+    const raw = await fs.readFile(getPreviewWindowStatePath(), 'utf-8')
+    const parsed = JSON.parse(raw) as PreviewWindowBounds
+    if (!Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)) return null
+    return {
+      x: Number.isFinite(parsed.x) ? parsed.x : undefined,
+      y: Number.isFinite(parsed.y) ? parsed.y : undefined,
+      width: Math.max(520, parsed.width),
+      height: Math.max(340, parsed.height),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function savePreviewWindowBounds(bounds: PreviewWindowBounds): Promise<void> {
+  const normalized: PreviewWindowBounds = {
+    x: Number.isFinite(bounds.x) ? bounds.x : undefined,
+    y: Number.isFinite(bounds.y) ? bounds.y : undefined,
+    width: Math.max(520, Number(bounds.width) || 520),
+    height: Math.max(340, Number(bounds.height) || 340),
+  }
+  await fs.writeFile(getPreviewWindowStatePath(), JSON.stringify(normalized, null, 2), 'utf-8')
 }
 
 function toLogString(value: unknown): string {
@@ -426,9 +484,19 @@ async function writeApiConfig(config: Record<string, string>): Promise<void> {
   await fs.writeFile(getApiConfigPath(), JSON.stringify(sanitized, null, 2), 'utf-8')
 }
 
+function loadRendererWindow(win: BrowserWindow, hash?: string): Promise<void> {
+  const rendererIndexPath = path.join(__dirname, '../dist/index.html')
+  if (process.env.VITE_DEV_SERVER_URL) {
+    const url = hash
+      ? `${process.env.VITE_DEV_SERVER_URL}#${hash}`
+      : process.env.VITE_DEV_SERVER_URL
+    return win.loadURL(url)
+  }
+  return win.loadFile(rendererIndexPath, hash ? { hash } : undefined)
+}
+
 function createWindow(): void {
   const preloadPath = path.join(__dirname, 'preload.js')
-  const rendererIndexPath = path.join(__dirname, '../dist/index.html')
   startupLog('INFO', 'createWindow:start', {
     isPackaged: app.isPackaged,
     appPath: app.getAppPath(),
@@ -436,7 +504,7 @@ function createWindow(): void {
     resourcesPath: process.resourcesPath,
     dirname: __dirname,
     preloadPath,
-    rendererIndexPath,
+    rendererIndexPath: path.join(__dirname, '../dist/index.html'),
     hasDevServerUrl: Boolean(process.env.VITE_DEV_SERVER_URL),
   })
 
@@ -450,6 +518,14 @@ function createWindow(): void {
       preload: preloadPath,
     },
     title: 'AnimeGate Translator',
+  })
+  mainWindow = win
+
+  win.on('closed', () => {
+    mainWindow = null
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.close()
+    }
   })
 
   win.webContents.on('did-finish-load', () => {
@@ -501,9 +577,7 @@ function createWindow(): void {
     }
   })
 
-  const loadPromise = process.env.VITE_DEV_SERVER_URL
-    ? win.loadURL(process.env.VITE_DEV_SERVER_URL)
-    : win.loadFile(rendererIndexPath)
+  const loadPromise = loadRendererWindow(win)
 
   void loadPromise.catch(error => {
     startupLog('ERROR', 'window-load-failed', error)
@@ -515,6 +589,54 @@ function createWindow(): void {
   })
 
   Menu.setApplicationMenu(null)
+}
+
+async function createDetachedPreviewWindow(): Promise<BrowserWindow> {
+  if (previewWindow && !previewWindow.isDestroyed()) {
+    previewWindow.focus()
+    return previewWindow
+  }
+
+  const preloadPath = path.join(__dirname, 'preload.js')
+  const savedBounds = await readPreviewWindowBounds()
+  const preview = new BrowserWindow({
+    title: 'AnimeGate Translator - Powiekszony podglad',
+    autoHideMenuBar: true,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    width: savedBounds?.width ?? 1080,
+    height: savedBounds?.height ?? 640,
+    x: savedBounds?.x,
+    y: savedBounds?.y,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: preloadPath,
+    },
+  })
+
+  previewWindow = preview
+  preview.on('closed', () => {
+    previewWindow = null
+  })
+
+  const persistBounds = (): void => {
+    if (!previewWindow || previewWindow.isDestroyed()) return
+    const bounds = previewWindow.getBounds()
+    void savePreviewWindowBounds(bounds).catch(error => {
+      startupLog('WARN', 'preview:save-bounds-failed', toLogString(error))
+    })
+  }
+  preview.on('resize', persistBounds)
+  preview.on('move', persistBounds)
+
+  preview.webContents.on('did-finish-load', () => {
+    preview.webContents.send('preview:state', detachedPreviewState)
+  })
+
+  await loadRendererWindow(preview, 'video-preview')
+  return preview
 }
 
 function setupFileIpc(): void {
@@ -719,6 +841,44 @@ function setupFileIpc(): void {
   ipcMain.handle('project:saveConfig', async (_event, args: { projectDir: string; config: DiskProjectConfigV1 }) => {
     const saved = await saveProjectConfigOnDisk(args.projectDir, args.config)
     return { ok: true, ...saved }
+  })
+
+  ipcMain.handle('preview:openWindow', async () => {
+    await createDetachedPreviewWindow()
+    return { ok: true }
+  })
+
+  ipcMain.handle('preview:closeWindow', async () => {
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.close()
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('preview:updateState', async (_event, state: Partial<DetachedPreviewState>) => {
+    detachedPreviewState = {
+      ...detachedPreviewState,
+      ...state,
+      videoSrc: typeof state.videoSrc === 'string' ? state.videoSrc : (state.videoSrc === null ? null : detachedPreviewState.videoSrc),
+      sourceText: typeof state.sourceText === 'string' ? state.sourceText : detachedPreviewState.sourceText,
+      targetText: typeof state.targetText === 'string' ? state.targetText : detachedPreviewState.targetText,
+      currentTime: Number.isFinite(state.currentTime) ? Number(state.currentTime) : detachedPreviewState.currentTime,
+      playbackRate: Number.isFinite(state.playbackRate) ? Number(state.playbackRate) : detachedPreviewState.playbackRate,
+      paused: typeof state.paused === 'boolean' ? state.paused : detachedPreviewState.paused,
+    }
+    if (previewWindow && !previewWindow.isDestroyed()) {
+      previewWindow.webContents.send('preview:state', detachedPreviewState)
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('preview:getState', async () => detachedPreviewState)
+
+  ipcMain.handle('preview:togglePlayback', async () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('preview:command', { type: 'toggle-playback' })
+    }
+    return { ok: true }
   })
 }
 

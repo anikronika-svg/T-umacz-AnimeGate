@@ -809,3 +809,37 @@
     - `recentCharacterHistory`,
     - `styleSettings` (do pustego kontekstu bez postaci),
   - po tym panel wraca do stanu pustego.
+
+## 39) Etap 1: powiekszony podglad jako osobne okno systemowe (v1.0.27)
+- Zmieniono architekture podgladu:
+  - `Powieksz podglad` otwiera teraz osobne okno Electron (`BrowserWindow`), a nie modal wewnatrz glownego UI.
+- Main process (`electron/main.ts`):
+  - dodano globalne zarzadzanie oknem podgladu (`previewWindow`) oraz stanem podgladu (`detachedPreviewState`),
+  - dodano IPC:
+    - `preview:openWindow`,
+    - `preview:closeWindow`,
+    - `preview:updateState`,
+    - `preview:getState`,
+    - `preview:togglePlayback` (komenda do glownego okna).
+  - dodano zapis/odczyt pozycji i rozmiaru okna podgladu:
+    - plik `preview-window-state.json` w `userData`,
+    - okno zapamietuje `x/y/width/height` miedzy uruchomieniami.
+  - dodano ladowanie renderer route przez hash (`#video-preview`) dla osobnego okna.
+- Preload / API:
+  - rozszerzono `electron/preload.ts` i `src/electron.d.ts` o jawne, bezpieczne API:
+    - otwieranie/zamykanie okna podgladu,
+    - push stanu podgladu,
+    - subskrypcja stanu (`onDetachedPreviewState`),
+    - subskrypcja komend (`onDetachedPreviewCommand`).
+- Renderer:
+  - dodano nowy komponent `src/components/DetachedVideoPreviewWindow.tsx`:
+    - wyswietla wideo,
+    - overlay napisow: oryginal u gory, polski na dole,
+    - obsluga `spacja` i klik wideo -> komenda play/pause do glownego okna,
+    - przycisk `Zamknij`.
+  - `src/main.tsx` renderuje osobny komponent dla route `#video-preview`.
+  - `src/App.tsx`:
+    - usunieto stary modal `FloatingVideoPreview` z glownego okna,
+    - przycisk `Powieksz podglad` otwiera osobne okno systemowe,
+    - stan podgladu (src, czas, pause/play, rate, napisy) jest synchronizowany do okna podgladu przez IPC,
+    - komenda play/pause z okna podgladu wraca do glownego playera.

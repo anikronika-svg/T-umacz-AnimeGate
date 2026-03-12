@@ -403,6 +403,34 @@ declare global {
         projectDir: string
         configPath: string
       }>
+      openDetachedPreviewWindow: () => Promise<{ ok: boolean }>
+      closeDetachedPreviewWindow: () => Promise<{ ok: boolean }>
+      updateDetachedPreviewState: (state: {
+        videoSrc?: string | null
+        currentTime?: number
+        playbackRate?: number
+        paused?: boolean
+        sourceText?: string
+        targetText?: string
+      }) => Promise<{ ok: boolean }>
+      getDetachedPreviewState: () => Promise<{
+        videoSrc: string | null
+        currentTime: number
+        playbackRate: number
+        paused: boolean
+        sourceText: string
+        targetText: string
+      }>
+      requestDetachedPreviewTogglePlayback: () => Promise<{ ok: boolean }>
+      onDetachedPreviewState: (callback: (state: {
+        videoSrc: string | null
+        currentTime: number
+        playbackRate: number
+        paused: boolean
+        sourceText: string
+        targetText: string
+      }) => void) => (() => void)
+      onDetachedPreviewCommand: (callback: (payload: { type: 'toggle-playback' }) => void) => (() => void)
     }
   }
 }

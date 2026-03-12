@@ -11,9 +11,13 @@ const child_process_1 = require("child_process");
 const updater_1 = require("./updater");
 const projectStorage_1 = require("./projectStorage");
 const OPEN_STATE_FILE = 'open-state.json';
+const PREVIEW_WINDOW_STATE_FILE = 'preview-window-state.json';
 const STARTUP_LOG_FILE = 'startup.log';
 function getOpenStatePath() {
     return path_1.default.join(electron_1.app.getPath('userData'), OPEN_STATE_FILE);
+}
+function getPreviewWindowStatePath() {
+    return path_1.default.join(electron_1.app.getPath('userData'), PREVIEW_WINDOW_STATE_FILE);
 }
 function getApiConfigPath() {
     return path_1.default.join(electron_1.app.getPath('userData'), 'api-config.json');
@@ -28,6 +32,42 @@ function getStartupLogPath() {
     catch {
         return path_1.default.join(process.cwd(), STARTUP_LOG_FILE);
     }
+}
+let mainWindow = null;
+let previewWindow = null;
+let detachedPreviewState = {
+    videoSrc: null,
+    currentTime: 0,
+    playbackRate: 1,
+    paused: true,
+    sourceText: '',
+    targetText: '',
+};
+async function readPreviewWindowBounds() {
+    try {
+        const raw = await fs_1.promises.readFile(getPreviewWindowStatePath(), 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (!Number.isFinite(parsed.width) || !Number.isFinite(parsed.height))
+            return null;
+        return {
+            x: Number.isFinite(parsed.x) ? parsed.x : undefined,
+            y: Number.isFinite(parsed.y) ? parsed.y : undefined,
+            width: Math.max(520, parsed.width),
+            height: Math.max(340, parsed.height),
+        };
+    }
+    catch {
+        return null;
+    }
+}
+async function savePreviewWindowBounds(bounds) {
+    const normalized = {
+        x: Number.isFinite(bounds.x) ? bounds.x : undefined,
+        y: Number.isFinite(bounds.y) ? bounds.y : undefined,
+        width: Math.max(520, Number(bounds.width) || 520),
+        height: Math.max(340, Number(bounds.height) || 340),
+    };
+    await fs_1.promises.writeFile(getPreviewWindowStatePath(), JSON.stringify(normalized, null, 2), 'utf-8');
 }
 function toLogString(value) {
     if (value instanceof Error) {
@@ -310,9 +350,18 @@ async function writeApiConfig(config) {
     });
     await fs_1.promises.writeFile(getApiConfigPath(), JSON.stringify(sanitized, null, 2), 'utf-8');
 }
+function loadRendererWindow(win, hash) {
+    const rendererIndexPath = path_1.default.join(__dirname, '../dist/index.html');
+    if (process.env.VITE_DEV_SERVER_URL) {
+        const url = hash
+            ? `${process.env.VITE_DEV_SERVER_URL}#${hash}`
+            : process.env.VITE_DEV_SERVER_URL;
+        return win.loadURL(url);
+    }
+    return win.loadFile(rendererIndexPath, hash ? { hash } : undefined);
+}
 function createWindow() {
     const preloadPath = path_1.default.join(__dirname, 'preload.js');
-    const rendererIndexPath = path_1.default.join(__dirname, '../dist/index.html');
     startupLog('INFO', 'createWindow:start', {
         isPackaged: electron_1.app.isPackaged,
         appPath: electron_1.app.getAppPath(),
@@ -320,7 +369,7 @@ function createWindow() {
         resourcesPath: process.resourcesPath,
         dirname: __dirname,
         preloadPath,
-        rendererIndexPath,
+        rendererIndexPath: path_1.default.join(__dirname, '../dist/index.html'),
         hasDevServerUrl: Boolean(process.env.VITE_DEV_SERVER_URL),
     });
     const win = new electron_1.BrowserWindow({
@@ -333,6 +382,13 @@ function createWindow() {
             preload: preloadPath,
         },
         title: 'AnimeGate Translator',
+    });
+    mainWindow = win;
+    win.on('closed', () => {
+        mainWindow = null;
+        if (previewWindow && !previewWindow.isDestroyed()) {
+            previewWindow.close();
+        }
     });
     win.webContents.on('did-finish-load', () => {
         startupLog('INFO', 'webContents:did-finish-load', {
@@ -366,14 +422,55 @@ function createWindow() {
             startupLog('WARN', 'renderer:console-message', { level, message, line, sourceId });
         }
     });
-    const loadPromise = process.env.VITE_DEV_SERVER_URL
-        ? win.loadURL(process.env.VITE_DEV_SERVER_URL)
-        : win.loadFile(rendererIndexPath);
+    const loadPromise = loadRendererWindow(win);
     void loadPromise.catch(error => {
         startupLog('ERROR', 'window-load-failed', error);
         renderStartupErrorPage(win, 'Nie mozna uruchomic aplikacji', toLogString(error));
     });
     electron_1.Menu.setApplicationMenu(null);
+}
+async function createDetachedPreviewWindow() {
+    if (previewWindow && !previewWindow.isDestroyed()) {
+        previewWindow.focus();
+        return previewWindow;
+    }
+    const preloadPath = path_1.default.join(__dirname, 'preload.js');
+    const savedBounds = await readPreviewWindowBounds();
+    const preview = new electron_1.BrowserWindow({
+        title: 'AnimeGate Translator - Powiekszony podglad',
+        autoHideMenuBar: true,
+        resizable: true,
+        minimizable: true,
+        maximizable: true,
+        width: savedBounds?.width ?? 1080,
+        height: savedBounds?.height ?? 640,
+        x: savedBounds?.x,
+        y: savedBounds?.y,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: preloadPath,
+        },
+    });
+    previewWindow = preview;
+    preview.on('closed', () => {
+        previewWindow = null;
+    });
+    const persistBounds = () => {
+        if (!previewWindow || previewWindow.isDestroyed())
+            return;
+        const bounds = previewWindow.getBounds();
+        void savePreviewWindowBounds(bounds).catch(error => {
+            startupLog('WARN', 'preview:save-bounds-failed', toLogString(error));
+        });
+    };
+    preview.on('resize', persistBounds);
+    preview.on('move', persistBounds);
+    preview.webContents.on('did-finish-load', () => {
+        preview.webContents.send('preview:state', detachedPreviewState);
+    });
+    await loadRendererWindow(preview, 'video-preview');
+    return preview;
 }
 function setupFileIpc() {
     electron_1.ipcMain.handle('file:openSubtitle', async (_event, args) => {
@@ -557,6 +654,39 @@ function setupFileIpc() {
     electron_1.ipcMain.handle('project:saveConfig', async (_event, args) => {
         const saved = await (0, projectStorage_1.saveProjectConfigOnDisk)(args.projectDir, args.config);
         return { ok: true, ...saved };
+    });
+    electron_1.ipcMain.handle('preview:openWindow', async () => {
+        await createDetachedPreviewWindow();
+        return { ok: true };
+    });
+    electron_1.ipcMain.handle('preview:closeWindow', async () => {
+        if (previewWindow && !previewWindow.isDestroyed()) {
+            previewWindow.close();
+        }
+        return { ok: true };
+    });
+    electron_1.ipcMain.handle('preview:updateState', async (_event, state) => {
+        detachedPreviewState = {
+            ...detachedPreviewState,
+            ...state,
+            videoSrc: typeof state.videoSrc === 'string' ? state.videoSrc : (state.videoSrc === null ? null : detachedPreviewState.videoSrc),
+            sourceText: typeof state.sourceText === 'string' ? state.sourceText : detachedPreviewState.sourceText,
+            targetText: typeof state.targetText === 'string' ? state.targetText : detachedPreviewState.targetText,
+            currentTime: Number.isFinite(state.currentTime) ? Number(state.currentTime) : detachedPreviewState.currentTime,
+            playbackRate: Number.isFinite(state.playbackRate) ? Number(state.playbackRate) : detachedPreviewState.playbackRate,
+            paused: typeof state.paused === 'boolean' ? state.paused : detachedPreviewState.paused,
+        };
+        if (previewWindow && !previewWindow.isDestroyed()) {
+            previewWindow.webContents.send('preview:state', detachedPreviewState);
+        }
+        return { ok: true };
+    });
+    electron_1.ipcMain.handle('preview:getState', async () => detachedPreviewState);
+    electron_1.ipcMain.handle('preview:togglePlayback', async () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('preview:command', { type: 'toggle-playback' });
+        }
+        return { ok: true };
     });
 }
 function setupUpdaterIpc() {
