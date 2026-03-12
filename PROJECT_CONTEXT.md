@@ -728,3 +728,26 @@
     - ustawienia tłumaczenia (`sourceLang`, `targetLang`, `preferredModelId`),
     - `styleSettings` (profile postaci, notatki, typ/podtyp, ustawienia kroków 2/3),
     - `lineCharacterAssignments` dla dalszego mapowania linii.
+
+## 36) Fix krytyczny: `Wczytaj` wybiera plik projektu i poprawnie go wykrywa (v1.0.24)
+- Zdiagnozowana przyczyna:
+  - flow `Wczytaj` byl oparty glownie o wybor folderu, co w praktyce utrudnialo wskazanie pliku projektu i prowadzilo do scenariusza "pusty katalog / brak plikow do otwarcia".
+  - loader oczekiwal katalogu projektu, a nie obslugiwal jawnie sciezki do pliku projektu.
+- Naprawa:
+  - dodano nowy IPC `project:pickFile` (dialog wyboru pliku projektu) z filtrami:
+    - `*.json`
+    - `*.agproj`
+  - `openProjectFromDisk(...)` w `electron/projectStorage.ts` przyjmuje teraz:
+    - sciezke katalogu projektu **albo**
+    - bezposrednia sciezke do pliku projektu.
+  - zaktualizowano preload/typy renderera i flow w `App.tsx`, aby `Wczytaj`:
+    - najpierw otwieral wybor pliku projektu,
+    - a jako fallback nadal pozwalal wybrac folder.
+- Diagnostyka:
+  - dodano wymagane logi startowe:
+    - `projectPath`
+    - `projectFileFound`
+    - `projectLoaded`
+- Efekt:
+  - `Wczytaj` poprawnie otwiera istniejacy projekt po wskazaniu pliku lub folderu,
+  - aktywny projekt jest ustawiany i hydracja danych projektu uruchamia sie prawidlowo.

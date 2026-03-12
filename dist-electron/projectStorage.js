@@ -11,6 +11,10 @@ const fs_1 = require("fs");
 const path_1 = __importDefault(require("path"));
 exports.PROJECT_CONFIG_FILE = 'animegate-project.json';
 exports.PROJECT_SCHEMA_VERSION = 1;
+function isProjectConfigLikePath(value) {
+    const lower = value.toLowerCase();
+    return lower.endsWith('.json') || lower.endsWith('.agproj');
+}
 function sanitizePathPart(value) {
     return value
         .trim()
@@ -85,15 +89,17 @@ async function createProjectOnDisk(args) {
     await fs_1.promises.writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
     return { projectDir, configPath, config };
 }
-async function openProjectFromDisk(projectDir) {
-    const normalizedDir = projectDir.trim();
-    if (!normalizedDir)
-        throw new Error('Brak ścieżki folderu projektu.');
-    const configPath = path_1.default.join(normalizedDir, exports.PROJECT_CONFIG_FILE);
+async function openProjectFromDisk(projectPath) {
+    const normalizedPath = projectPath.trim();
+    if (!normalizedPath)
+        throw new Error('Brak ścieżki projektu.');
+    const looksLikeFile = isProjectConfigLikePath(normalizedPath);
+    const projectDir = looksLikeFile ? path_1.default.dirname(normalizedPath) : normalizedPath;
+    const configPath = looksLikeFile ? normalizedPath : path_1.default.join(projectDir, exports.PROJECT_CONFIG_FILE);
     const raw = await fs_1.promises.readFile(configPath, 'utf-8');
     const parsed = JSON.parse(raw);
     const config = assertProjectConfig(parsed);
-    return { projectDir: normalizedDir, configPath, config };
+    return { projectDir, configPath, config };
 }
 async function saveProjectConfigOnDisk(projectDir, nextConfig) {
     const normalizedDir = projectDir.trim();

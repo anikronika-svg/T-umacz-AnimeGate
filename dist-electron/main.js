@@ -524,12 +524,34 @@ function setupFileIpc() {
         }
         return { canceled: false, directoryPath: result.filePaths[0] };
     });
+    electron_1.ipcMain.handle('project:pickFile', async (_event, args) => {
+        const result = await electron_1.dialog.showOpenDialog({
+            title: args?.title ?? 'Wybierz plik projektu',
+            properties: ['openFile'],
+            defaultPath: args?.defaultPath,
+            filters: [
+                { name: 'Projekt AnimeGate', extensions: ['json', 'agproj'] },
+                { name: 'Wszystkie pliki', extensions: ['*'] },
+            ],
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+            return { canceled: true };
+        }
+        return { canceled: false, filePath: result.filePaths[0] };
+    });
     electron_1.ipcMain.handle('project:create', async (_event, args) => {
         const created = await (0, projectStorage_1.createProjectOnDisk)(args);
         return { ok: true, ...created };
     });
-    electron_1.ipcMain.handle('project:open', async (_event, projectDir) => {
-        const opened = await (0, projectStorage_1.openProjectFromDisk)(projectDir);
+    electron_1.ipcMain.handle('project:open', async (_event, projectPath) => {
+        startupLog('INFO', 'projectPath', { projectPath });
+        const opened = await (0, projectStorage_1.openProjectFromDisk)(projectPath);
+        startupLog('INFO', 'projectFileFound', { configPath: opened.configPath });
+        startupLog('INFO', 'projectLoaded', {
+            projectId: opened.config.projectId,
+            title: opened.config.title,
+            projectDir: opened.projectDir,
+        });
         return { ok: true, ...opened };
     });
     electron_1.ipcMain.handle('project:saveConfig', async (_event, args) => {

@@ -1,6 +1,6 @@
 {
   "name": "animegate-translator",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "description": "AnimeGate Translator - desktop app",
   "author": "Adrian",
   "main": "dist-electron/main.js",

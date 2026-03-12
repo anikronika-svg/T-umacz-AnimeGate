@@ -84,6 +84,11 @@ export interface ProjectOpenResult {
   config: DiskProjectConfigV1
 }
 
+function isProjectConfigLikePath(value: string): boolean {
+  const lower = value.toLowerCase()
+  return lower.endsWith('.json') || lower.endsWith('.agproj')
+}
+
 function sanitizePathPart(value: string): string {
   return value
     .trim()
@@ -163,14 +168,16 @@ export async function createProjectOnDisk(args: CreateProjectArgs): Promise<Proj
   return { projectDir, configPath, config }
 }
 
-export async function openProjectFromDisk(projectDir: string): Promise<ProjectOpenResult> {
-  const normalizedDir = projectDir.trim()
-  if (!normalizedDir) throw new Error('Brak ścieżki folderu projektu.')
-  const configPath = path.join(normalizedDir, PROJECT_CONFIG_FILE)
+export async function openProjectFromDisk(projectPath: string): Promise<ProjectOpenResult> {
+  const normalizedPath = projectPath.trim()
+  if (!normalizedPath) throw new Error('Brak ścieżki projektu.')
+  const looksLikeFile = isProjectConfigLikePath(normalizedPath)
+  const projectDir = looksLikeFile ? path.dirname(normalizedPath) : normalizedPath
+  const configPath = looksLikeFile ? normalizedPath : path.join(projectDir, PROJECT_CONFIG_FILE)
   const raw = await fs.readFile(configPath, 'utf-8')
   const parsed = JSON.parse(raw)
   const config = assertProjectConfig(parsed)
-  return { projectDir: normalizedDir, configPath, config }
+  return { projectDir, configPath, config }
 }
 
 export async function saveProjectConfigOnDisk(projectDir: string, nextConfig: DiskProjectConfigV1): Promise<ProjectOpenResult> {

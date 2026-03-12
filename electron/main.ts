@@ -683,13 +683,36 @@ function setupFileIpc(): void {
     return { canceled: false, directoryPath: result.filePaths[0] }
   })
 
+  ipcMain.handle('project:pickFile', async (_event, args?: { title?: string; defaultPath?: string }) => {
+    const result = await dialog.showOpenDialog({
+      title: args?.title ?? 'Wybierz plik projektu',
+      properties: ['openFile'],
+      defaultPath: args?.defaultPath,
+      filters: [
+        { name: 'Projekt AnimeGate', extensions: ['json', 'agproj'] },
+        { name: 'Wszystkie pliki', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true }
+    }
+    return { canceled: false, filePath: result.filePaths[0] }
+  })
+
   ipcMain.handle('project:create', async (_event, args: CreateProjectArgs) => {
     const created = await createProjectOnDisk(args)
     return { ok: true, ...created }
   })
 
-  ipcMain.handle('project:open', async (_event, projectDir: string) => {
-    const opened = await openProjectFromDisk(projectDir)
+  ipcMain.handle('project:open', async (_event, projectPath: string) => {
+    startupLog('INFO', 'projectPath', { projectPath })
+    const opened = await openProjectFromDisk(projectPath)
+    startupLog('INFO', 'projectFileFound', { configPath: opened.configPath })
+    startupLog('INFO', 'projectLoaded', {
+      projectId: opened.config.projectId,
+      title: opened.config.title,
+      projectDir: opened.projectDir,
+    })
     return { ok: true, ...opened }
   })
 

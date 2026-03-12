@@ -1428,11 +1428,11 @@ function ProjectStepZeroModal({
 
           <div style={{ border: `1px solid ${C.border}`, padding: 12, background: '#1e2131', minHeight: 274, display: 'flex', flexDirection: 'column' }}>
             <div style={{ color: C.accentY, fontWeight: 700, marginBottom: 8 }}>Otwórz istniejący projekt</div>
-            <div style={{ fontSize: 12, color: C.textDim, marginBottom: 6 }}>Folder projektu:</div>
+            <div style={{ fontSize: 12, color: C.textDim, marginBottom: 6 }}>Plik projektu (lub folder):</div>
             <div style={{ display: 'flex', gap: 6 }}>
-              <button style={BASE_BTN} onClick={onPickOpenDir}>Wybierz folder</button>
+              <button style={BASE_BTN} onClick={onPickOpenDir}>Wybierz projekt</button>
               <div style={{ flex: 1, fontSize: 11, color: C.textDim, alignSelf: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {openDir || 'Nie wybrano folderu'}
+                {openDir || 'Nie wybrano projektu'}
               </div>
             </div>
             <div style={{ marginTop: 'auto', paddingTop: 12 }}>
@@ -3716,7 +3716,7 @@ export default function App(): React.ReactElement {
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
   const [newProjectBaseDir, setNewProjectBaseDir] = useState('')
-  const [openProjectDir, setOpenProjectDir] = useState('')
+  const [openProjectPath, setOpenProjectPath] = useState('')
   const {
     status: updaterStatus,
     isSupported: isUpdaterSupported,
@@ -4346,20 +4346,27 @@ export default function App(): React.ReactElement {
   }
 
   const handlePickOpenProjectDir = async (): Promise<void> => {
+    if (window.electronAPI?.pickProjectFile) {
+      const picked = await window.electronAPI.pickProjectFile({ title: 'Wybierz plik projektu (animegate-project.json)' })
+      if (!picked.canceled && picked.filePath) {
+        setOpenProjectPath(picked.filePath)
+        return
+      }
+    }
     if (!window.electronAPI?.pickProjectDirectory) return
-    const result = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder istniejącego projektu' })
-    if (result.canceled || !result.directoryPath) return
-    setOpenProjectDir(result.directoryPath)
+    const fallback = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder istniejącego projektu' })
+    if (fallback.canceled || !fallback.directoryPath) return
+    setOpenProjectPath(fallback.directoryPath)
   }
 
-  const openDiskProjectByDirectory = async (projectDir: string): Promise<void> => {
+  const openDiskProjectByPath = async (projectPath: string): Promise<void> => {
     if (!window.electronAPI?.openProject) return
-    const normalizedDir = projectDir.trim()
-    if (!normalizedDir) {
-      setProjectStepStatus('Wybierz folder istniejącego projektu.')
+    const normalizedPath = projectPath.trim()
+    if (!normalizedPath) {
+      setProjectStepStatus('Wybierz plik lub folder istniejącego projektu.')
       return
     }
-    const result = await window.electronAPI.openProject(normalizedDir)
+    const result = await window.electronAPI.openProject(normalizedPath)
     hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
   }
 
@@ -4392,7 +4399,7 @@ export default function App(): React.ReactElement {
       const reopened = await window.electronAPI.openProject(result.projectDir)
       hydrateFromDiskProject(reopened.config, reopened.projectDir, reopened.configPath)
       setNewProjectTitle('')
-      setOpenProjectDir('')
+      setOpenProjectPath('')
       setCharactersOpen(true)
       setProjectStepStatus(`Utworzono i aktywowano projekt: ${title}`)
     } catch (error) {
@@ -4402,12 +4409,23 @@ export default function App(): React.ReactElement {
   }
 
   const handleLoadDiskProjectFromButton = async (): Promise<void> => {
-    if (!window.electronAPI?.pickProjectDirectory || !window.electronAPI?.openProject) return
+    if (!window.electronAPI?.openProject) return
     try {
-      const result = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder istniejącego projektu' })
-      if (result.canceled || !result.directoryPath) return
-      setOpenProjectDir(result.directoryPath)
-      await openDiskProjectByDirectory(result.directoryPath)
+      let selectedPath = ''
+      if (window.electronAPI?.pickProjectFile) {
+        const picked = await window.electronAPI.pickProjectFile({ title: 'Wybierz plik projektu (animegate-project.json)' })
+        if (!picked.canceled && picked.filePath) {
+          selectedPath = picked.filePath
+        }
+      }
+      if (!selectedPath) {
+        if (!window.electronAPI?.pickProjectDirectory) return
+        const fallback = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder istniejącego projektu' })
+        if (fallback.canceled || !fallback.directoryPath) return
+        selectedPath = fallback.directoryPath
+      }
+      setOpenProjectPath(selectedPath)
+      await openDiskProjectByPath(selectedPath)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nie udalo sie wczytac projektu.'
       setProjectStepStatus(`BLAD wczytywania projektu: ${message}`)
@@ -4417,7 +4435,7 @@ export default function App(): React.ReactElement {
 
   const handleOpenDiskProject = async (): Promise<void> => {
     try {
-      await openDiskProjectByDirectory(openProjectDir)
+      await openDiskProjectByPath(openProjectPath)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nie udalo sie otworzyc projektu.'
       setProjectStepStatus(`BLAD otwierania projektu: ${message}`)
@@ -6244,7 +6262,7 @@ export default function App(): React.ReactElement {
         open={isProjectStepOpen}
         newTitle={newProjectTitle}
         newBaseDir={newProjectBaseDir}
-        openDir={openProjectDir}
+        openDir={openProjectPath}
         statusMessage={projectStepStatus}
         onChangeNewTitle={setNewProjectTitle}
         onPickNewBaseDir={() => { void handlePickNewProjectBaseDir() }}

@@ -24,7 +24,8 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
         };
     },
     pickProjectDirectory: (args) => electron_1.ipcRenderer.invoke('project:pickDirectory', args),
+    pickProjectFile: (args) => electron_1.ipcRenderer.invoke('project:pickFile', args),
     createProject: (args) => electron_1.ipcRenderer.invoke('project:create', args),
-    openProject: (projectDir) => electron_1.ipcRenderer.invoke('project:open', projectDir),
+    openProject: (projectPath) => electron_1.ipcRenderer.invoke('project:open', projectPath),
     saveProjectConfig: (args) => electron_1.ipcRenderer.invoke('project:saveConfig', args),
 });

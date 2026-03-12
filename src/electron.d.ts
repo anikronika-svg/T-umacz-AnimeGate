@@ -111,6 +111,10 @@ declare global {
         canceled: boolean
         directoryPath?: string
       }>
+      pickProjectFile: (args?: { title?: string; defaultPath?: string }) => Promise<{
+        canceled: boolean
+        filePath?: string
+      }>
       createProject: (args: {
         title: string
         projectId: string
@@ -253,7 +257,7 @@ declare global {
           }
         }
       }>
-      openProject: (projectDir: string) => Promise<{
+      openProject: (projectPath: string) => Promise<{
         ok: boolean
         projectDir: string
         configPath: string

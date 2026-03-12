@@ -188,6 +188,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   pickProjectDirectory: (args?: { title?: string; defaultPath?: string }): Promise<{ canceled: boolean; directoryPath?: string }> =>
     ipcRenderer.invoke('project:pickDirectory', args),
+  pickProjectFile: (args?: { title?: string; defaultPath?: string }): Promise<{ canceled: boolean; filePath?: string }> =>
+    ipcRenderer.invoke('project:pickFile', args),
   createProject: (args: {
     title: string
     projectId: string
@@ -195,8 +197,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     initialConfig: Omit<DiskProjectConfigV1, 'projectDir' | 'configPath' | 'createdAt' | 'updatedAt'>
   }): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
     ipcRenderer.invoke('project:create', args),
-  openProject: (projectDir: string): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
-    ipcRenderer.invoke('project:open', projectDir),
+  openProject: (projectPath: string): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
+    ipcRenderer.invoke('project:open', projectPath),
   saveProjectConfig: (args: { projectDir: string; config: DiskProjectConfigV1 }): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
     ipcRenderer.invoke('project:saveConfig', args),
 })
