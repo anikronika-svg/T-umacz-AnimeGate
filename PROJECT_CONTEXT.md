@@ -1099,3 +1099,21 @@
   - dodano `src/project/assignmentMatching.spec.ts`:
     - zapis `speakerModeTag`,
     - odtworzenie canonical postaci z wariantu nawiasowego po wczytaniu assignmentow.
+
+## 50) Hotfix renderer startup crash: `Cannot access 'zr' before initialization` (v1.0.37)
+- Objaw:
+  - po ostatnim refaktorze identity resolvera renderer startowal z krytycznym bledem:
+    - `ReferenceError: Cannot access 'zr' before initialization` (zminifikowany alias w bundlu).
+- Root cause:
+  - w `src/App.tsx` zmienna `selectedCharacter` uzywala `identityAliasMap` przed jej deklaracja (`const` TDZ).
+  - Kolejnosc byla:
+    - `selectedCharacter = resolveCharacterForLineName(..., identityAliasMap)`
+    - dopiero nizej: `const identityAliasMap = useMemo(...)`
+- Naprawa:
+  - przestawiono kolejnosc inicjalizacji:
+    - `identityAliasMap` deklarowane/przeliczane przed `selectedCharacter`.
+  - brak obejsc typu try/catch — naprawiono zrodlo problemu kolejnosci inicjalizacji.
+- Status:
+  - renderer uruchamia sie poprawnie,
+  - brak bledu "Cannot access before initialization",
+  - funkcje identity resolvera z etapu v1.0.36 pozostaja aktywne.

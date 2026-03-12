@@ -4028,6 +4028,23 @@ export default function App(): React.ReactElement {
       endSec: Math.max(timing.endSec, timing.startSec + 0.08),
     }
   }, [selectedId, lineTimingById])
+  const identityAliasMap = useMemo(() => {
+    const map = new Map<string, string>()
+    projectLineAssignments.forEach(assignment => {
+      const canonical = assignment.resolvedCharacterName?.trim()
+      if (!canonical) return
+      const alias = normalizeCharacterAlias(assignment.rawCharacter || '')
+      if (!alias) return
+      if (!map.has(alias)) {
+        map.set(alias, canonical)
+      }
+      const normalized = normalizeCharacterName(assignment.rawCharacter || '')
+      if (normalized && !map.has(normalized)) {
+        map.set(normalized, canonical)
+      }
+    })
+    return map
+  }, [projectLineAssignments])
   const selectedCharacter = selectedRow?.character
     ? resolveCharacterForLineName(selectedRow.character, styleSettings.characters, identityAliasMap)
     : null
@@ -4047,24 +4064,6 @@ export default function App(): React.ReactElement {
     })
     return map
   }, [styleSettings.characters])
-
-  const identityAliasMap = useMemo(() => {
-    const map = new Map<string, string>()
-    projectLineAssignments.forEach(assignment => {
-      const canonical = assignment.resolvedCharacterName?.trim()
-      if (!canonical) return
-      const alias = normalizeCharacterAlias(assignment.rawCharacter || '')
-      if (!alias) return
-      if (!map.has(alias)) {
-        map.set(alias, canonical)
-      }
-      const normalized = normalizeCharacterName(assignment.rawCharacter || '')
-      if (normalized && !map.has(normalized)) {
-        map.set(normalized, canonical)
-      }
-    })
-    return map
-  }, [projectLineAssignments])
 
   useEffect(() => {
     if (!activeDiskProject) return
