@@ -843,3 +843,28 @@
     - przycisk `Powieksz podglad` otwiera osobne okno systemowe,
     - stan podgladu (src, czas, pause/play, rate, napisy) jest synchronizowany do okna podgladu przez IPC,
     - komenda play/pause z okna podgladu wraca do glownego playera.
+
+## 40) Quality fix: ASS preprocessor + context poprzedniej linii (v1.0.28)
+- Cel:
+  - poprawic jakosc pipeline tlumaczenia bez psucia round-trip ASS.
+- Zmiany architektoniczne:
+  - dodano nowy modul `src/project/assTranslationPreprocessor.ts` z jawnymi helperami:
+    - `tokenizeAssForTranslation` (dzieli tekst na chunki `text` i markery techniczne ASS),
+    - `stripAssFormattingForTranslation` (usuwa z semantyki `{...}`, `\\N`, `\\h`),
+    - `hasTranslatableAssText`,
+    - `hasAssTechnicalMarkers`,
+    - `buildContinuationContextFromPreviousLine` (detekcja kontynuacji zdania z poprzedniej linii).
+- Integracja z pipeline:
+  - `App.tsx` korzysta teraz z nowego preprocessora zamiast lokalnych regexow.
+  - tlumaczenie per-linia nadal zachowuje tagi ASS i `\\N`, ale do silnika trafiaja tylko chunki semantyczne.
+  - dodano pole kontekstu `previousLineContinuation` do `TranslationRequestContext`.
+  - przy tlumaczeniu biezacej linii, gdy poprzednia (po oczyszczeniu ASS) konczy sie przecinkiem / wielokropkiem / znakiem kontynuacji,
+    kontekst poprzedniej linii jest dopinany do promptu (LLM) i do parametru `context` DeepL.
+- Bezpieczenstwo i regresje:
+  - batch DeepL jest automatycznie pomijany dla linii z markerami ASS lub dla linii wymagajacych kontekstu kontynuacji,
+    aby nie utracic bezpiecznej sciezki per-linia zachowujacej tagi.
+- Testy:
+  - dodano `src/project/assTranslationPreprocessor.spec.ts`:
+    - przypadki `\\Ncreate`, `\\NTino`, `{\\an8}Hello`, `{\\i1}Please{\\i0} wait`,
+    - detekcja kontynuacji po przecinku,
+    - brak laczenia po kropce.

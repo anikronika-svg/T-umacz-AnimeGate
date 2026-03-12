@@ -51,6 +51,14 @@ import {
 } from './project/characterNameMatching'
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
+import {
+  buildContinuationContextFromPreviousLine,
+  hasAssTechnicalMarkers,
+  hasTranslatableAssText,
+  stripAssFormattingForTranslation,
+  tokenizeAssForTranslation,
+  type SubtitleToken as AssSubtitleToken,
+} from './project/assTranslationPreprocessor'
 import { CharacterNotesModal } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -210,6 +218,7 @@ interface TranslationRequestContext {
   speakingTraits: string
   characterNote: string
   styleContext: string
+  previousLineContinuation: string
 }
 
 type TranslatorFn = (
@@ -795,35 +804,13 @@ function normalizeForComparison(value: string): string {
 }
 
 function stripAssFormatting(value: string): string {
-  return value
-    .replace(/\{[^{}]*\}/g, '')
-    .replace(/\\[Nn]/g, ' ')
-    .replace(/\\h/g, ' ')
+  return stripAssFormattingForTranslation(value)
 }
 
-type SubtitleToken =
-  | { type: 'text'; value: string }
-  | { type: 'tag'; value: string }
+type SubtitleToken = AssSubtitleToken
 
 function tokenizeSubtitleText(value: string): SubtitleToken[] {
-  const tokens: SubtitleToken[] = []
-  const pattern = /(\{[^{}]*\}|\\N|\\n|\\h)/g
-  let last = 0
-  let match: RegExpExecArray | null
-
-  while ((match = pattern.exec(value)) !== null) {
-    if (match.index > last) {
-      tokens.push({ type: 'text', value: value.slice(last, match.index) })
-    }
-    tokens.push({ type: 'tag', value: match[0] })
-    last = pattern.lastIndex
-  }
-
-  if (last < value.length) {
-    tokens.push({ type: 'text', value: value.slice(last) })
-  }
-
-  return tokens
+  return tokenizeAssForTranslation(value)
 }
 
 function bigrams(value: string): string[] {
@@ -4070,6 +4057,7 @@ export default function App(): React.ReactElement {
       styleContext: resolvedCharacterName
         ? buildTranslationStyleContext(styleSettings, resolvedCharacterName, gender)
         : '',
+      previousLineContinuation: '',
     }
   }
 
@@ -4722,6 +4710,9 @@ export default function App(): React.ReactElement {
     if (formality) {
       body.set('formality', formality)
     }
+    if (context?.previousLineContinuation) {
+      body.set('context', `Previous subtitle line: ${context.previousLineContinuation}`)
+    }
     if (chosenSource && chosenSource.toLowerCase() !== 'auto') {
       body.set('source_lang', mapDeeplLang(chosenSource))
     }
@@ -4829,6 +4820,10 @@ export default function App(): React.ReactElement {
     context?.characterSubtypeLabel ? `Character subtype (PL): ${context.characterSubtypeLabel} (${context.characterSubtypeId})` : '',
     context?.characterSubtypePrompt ? `Character type/subtype directive:\n${context.characterSubtypePrompt}` : '',
     context?.characterUserNotes ? `User character notes (PL): ${context.characterUserNotes}` : '',
+    context?.previousLineContinuation
+      ? 'Sentence continuity: previous subtitle line ends with continuation punctuation. Treat current line as continuation of the same sentence.'
+      : '',
+    context?.previousLineContinuation ? `Previous line context: ${context.previousLineContinuation}` : '',
     (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
     context?.characterNote ? `Character note to respect: ${context.characterNote}` : '',
@@ -5091,8 +5086,7 @@ export default function App(): React.ReactElement {
   }
 
   const lineHasTranslatableContent = (row: DialogRow): boolean => {
-    const tokens = tokenizeSubtitleText(row.sourceRaw || row.source)
-    return tokens.some(token => token.type === 'text' && token.value.trim())
+    return hasTranslatableAssText(row.sourceRaw || row.source)
   }
 
   const lineHasTranslatedContent = (row: DialogRow | undefined): boolean => {
@@ -5165,7 +5159,15 @@ export default function App(): React.ReactElement {
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<string> => {
     const fromMemory = resolveMemoryTranslation(row)
     if (fromMemory && mode === 'primary') return fromMemory
-    const context = getTranslationContextForRow(row)
+    const rowIndex = rowsData.findIndex(item => item.id === row.id)
+    const previousRow = rowIndex > 0 ? rowsData[rowIndex - 1] : null
+    const previousLineContinuation = previousRow
+      ? buildContinuationContextFromPreviousLine(previousRow.sourceRaw || previousRow.source)
+      : ''
+    const baseContext = getTranslationContextForRow(row)
+    const context = previousLineContinuation
+      ? { ...baseContext, previousLineContinuation }
+      : baseContext
     const controller = new AbortController()
     activeTranslationAbortRef.current = controller
     const backoffMs = [2000, 5000, 9000, 14000]
@@ -5318,6 +5320,7 @@ export default function App(): React.ReactElement {
     // (rowsData nie aktualizuje sie w trakcie async pipeline)
     const rowsSnapshot = rowsData
     const rowsById = new Map(rowsSnapshot.map(row => [row.id, row]))
+    const rowIndexById = new Map(rowsSnapshot.map((row, index) => [row.id, index]))
 
     // Kontrakt per-linia: status + blad
     type LineStatus = 'done' | 'error' | 'rate-limited' | 'cancelled'
@@ -5357,7 +5360,17 @@ export default function App(): React.ReactElement {
             .map(lineId => rowsById.get(lineId))
             .filter((row): row is DialogRow => Boolean(row))
           const batchContexts = batchRows.map(row => getTranslationContextForRow(row))
-          const canUseBatch = batchContexts.every(context => (
+          const hasContextDependentRows = batchRows.some(row => {
+            const rowIndex = rowIndexById.get(row.id) ?? -1
+            if (rowIndex <= 0) return false
+            const previousRow = rowsSnapshot[rowIndex - 1]
+            if (!previousRow) return false
+            return buildContinuationContextFromPreviousLine(previousRow.sourceRaw || previousRow.source).length > 0
+          })
+          const hasAssMarkers = batchRows.some(row => hasAssTechnicalMarkers(row.sourceRaw || row.source))
+          const canUseBatch = !hasContextDependentRows
+            && !hasAssMarkers
+            && batchContexts.every(context => (
             context.effectiveStyle === 'neutral'
             && !context.characterNote
             && !context.speakingTraits
@@ -5366,7 +5379,7 @@ export default function App(): React.ReactElement {
             && !context.characterSubtypeId
             && !context.characterUserNotes
             && context.effectiveStyleSource === 'global'
-          ))
+            ))
           if (!canUseBatch) {
             appendTranslationLog(`Batch ${batchIndex + 1}: pomijam batch DeepL (aktywne style per-postac).`)
           }
