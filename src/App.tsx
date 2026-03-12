@@ -59,6 +59,7 @@ import {
   tokenizeAssForTranslation,
   type SubtitleToken as AssSubtitleToken,
 } from './project/assTranslationPreprocessor'
+import { isNonTranslatableProperNounLine } from './project/translationHeuristics'
 import { CharacterNotesModal } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -199,6 +200,7 @@ interface DialogRow {
   // sourceRaw: oryginalny tekst z pliku z tagami i \N — wejscie do translateSubtitleLinePreservingTags
   sourceRaw: string
   target: string
+  requiresManualCheck?: boolean
 }
 
 interface TranslationRequestContext {
@@ -228,6 +230,11 @@ type TranslatorFn = (
   signal: AbortSignal,
   context: TranslationRequestContext,
 ) => Promise<string>
+
+interface TranslationAttemptResult {
+  translated: string
+  requiresManualCheck: boolean
+}
 
 const DEFAULT_TRANSLATION_BATCH_SIZE = 20
 const DEFAULT_DELAY_BETWEEN_BATCHES_MS = 1800
@@ -3611,12 +3618,20 @@ function LinesView({
                 cursor: 'pointer',
                 background: translating
                   ? '#344226'
+                  : row.requiresManualCheck
+                    ? '#3b2f1f'
                   : active
                     ? '#33406a'
                     : marked
                       ? '#282a44'
                       : 'transparent',
-                borderLeft: translating ? `3px solid ${C.accentG}` : active ? `3px solid ${C.accent}` : '3px solid transparent',
+                borderLeft: translating
+                  ? `3px solid ${C.accentG}`
+                  : row.requiresManualCheck
+                    ? `3px solid ${C.accentY}`
+                    : active
+                      ? `3px solid ${C.accent}`
+                      : '3px solid transparent',
                 boxShadow: active ? 'inset 0 0 0 1px rgba(137,180,250,0.35)' : 'none',
               }}
               onMouseEnter={e => { if (!active) e.currentTarget.style.background = C.bg3 }}
@@ -3633,7 +3648,10 @@ function LinesView({
               <span style={{ fontSize: 11, color: C.accent }}>{row.style}</span>
               <span style={{ fontSize: 11, color: row.character ? C.accentY : C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.character || ''}</span>
               <span style={{ fontSize: 12, color: C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.source}</span>
-              <span style={{ fontSize: 12, color: row.target ? C.text : C.textDim, fontStyle: row.target ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.target || ''}</span>
+              <span style={{ fontSize: 12, color: row.requiresManualCheck ? C.accentY : (row.target ? C.text : C.textDim), fontStyle: row.target ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {row.requiresManualCheck ? '⚠ ' : ''}
+                {row.target || ''}
+              </span>
             </div>
           )
         })}
@@ -5156,9 +5174,16 @@ export default function App(): React.ReactElement {
     return parts.join('')
   }
 
-  const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<string> => {
+  const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
     const fromMemory = resolveMemoryTranslation(row)
-    if (fromMemory && mode === 'primary') return fromMemory
+    if (fromMemory && mode === 'primary') return { translated: fromMemory, requiresManualCheck: false }
+    if (isNonTranslatableProperNounLine(row.sourceRaw || row.source)) {
+      appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — pomijam silnik i oznaczam do recznego sprawdzenia.`)
+      return {
+        translated: row.source.trim(),
+        requiresManualCheck: true,
+      }
+    }
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
     const previousRow = rowIndex > 0 ? rowsData[rowIndex - 1] : null
     const previousLineContinuation = previousRow
@@ -5264,7 +5289,7 @@ export default function App(): React.ReactElement {
     if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
       appendTranslationLog(`Linia ${row.id}: wynik podejrzany (identyczny z oryginalem, ${sourceLang}->${targetLang})`)
     }
-    return translated
+    return { translated, requiresManualCheck: false }
   }
 
   const testProviderConnection = async (provider: string): Promise<string> => {
@@ -5397,7 +5422,12 @@ export default function App(): React.ReactElement {
             memoryResolved.forEach((_, id) => recordResult(id, 'done'))
             setRowsData(prev => prev.map(item => (
               memoryResolved.has(item.id)
-                ? { ...item, target: memoryResolved.get(item.id) as string, pl: 'done' }
+                ? {
+                  ...item,
+                  target: memoryResolved.get(item.id) as string,
+                  pl: 'done',
+                  requiresManualCheck: false,
+                }
                 : item
             )))
           }
@@ -5457,7 +5487,12 @@ export default function App(): React.ReactElement {
               })
               setRowsData(prev => prev.map(item => (
                 byId.has(item.id)
-                  ? { ...item, target: byId.get(item.id) as string, pl: 'done' }
+                  ? {
+                    ...item,
+                    target: byId.get(item.id) as string,
+                    pl: 'done',
+                    requiresManualCheck: false,
+                  }
                   : item
               )))
               if (!stopTranslationRef.current && batchIndex < batches.length - 1) {
@@ -5477,12 +5512,17 @@ export default function App(): React.ReactElement {
           setSelectedLineIds(new Set([lineId]))
           setTranslatingLineId(lineId)
           try {
-            const translated = await translateSingleRow(row)
+            const result = await translateSingleRow(row)
             if (stopTranslationRef.current) break
             recordResult(lineId, 'done')
             setRowsData(prev => prev.map(item => (
               item.id === lineId
-                ? { ...item, target: translated, pl: 'done' }
+                ? {
+                  ...item,
+                  target: result.translated,
+                  pl: result.requiresManualCheck ? 'draft' : 'done',
+                  requiresManualCheck: result.requiresManualCheck,
+                }
                 : item
             )))
           } catch (error) {
@@ -5535,11 +5575,16 @@ export default function App(): React.ReactElement {
           if (!row) continue
           setTranslatingLineId(lineId)
           try {
-            const translated = await translateSingleRow(row, 'primary')
+            const result = await translateSingleRow(row, 'primary')
             recordResult(lineId, 'done')
             setRowsData(prev => prev.map(item => (
               item.id === lineId
-                ? { ...item, target: translated, pl: 'done' }
+                ? {
+                  ...item,
+                  target: result.translated,
+                  pl: result.requiresManualCheck ? 'draft' : 'done',
+                  requiresManualCheck: result.requiresManualCheck,
+                }
                 : item
             )))
           } catch (error) {
@@ -5551,11 +5596,16 @@ export default function App(): React.ReactElement {
             appendTranslationLog(`Przebieg 2 linia ${lineId}: ${diagnostic} — probuje fallback.`)
             // Przebieg 2 nieudany — ostatnia szansa przez fallback (Libre/MyMemory)
             try {
-              const translated = await translateSingleRow(row, 'fallback')
+              const result = await translateSingleRow(row, 'fallback')
               recordResult(lineId, 'done')
               setRowsData(prev => prev.map(item => (
                 item.id === lineId
-                  ? { ...item, target: translated, pl: 'done' }
+                  ? {
+                    ...item,
+                    target: result.translated,
+                    pl: result.requiresManualCheck ? 'draft' : 'done',
+                    requiresManualCheck: result.requiresManualCheck,
+                  }
                   : item
               )))
             } catch (fallbackError) {
@@ -5653,7 +5703,7 @@ export default function App(): React.ReactElement {
 
     setRowsData(prev => prev.map(row => (
       row.id === selectedRow.id
-        ? { ...row, target: chosen.target, pl: 'draft' }
+        ? { ...row, target: chosen.target, pl: 'draft', requiresManualCheck: false }
         : row
     )))
     setMemoryStore(prev => ({
@@ -5671,12 +5721,16 @@ export default function App(): React.ReactElement {
   }
 
   const handleChangeLineTarget = (lineId: number, target: string): void => {
-    setRowsData(prev => prev.map(row => row.id === lineId ? { ...row, target } : row))
+    setRowsData(prev => prev.map(row => (row.id === lineId
+      ? { ...row, target, requiresManualCheck: false }
+      : row)))
   }
 
   const handleApplyGenderCorrections = (changes: Array<{ lineId: number; after: string }>): void => {
     const byId = new Map(changes.map(change => [change.lineId, change.after]))
-    setRowsData(prev => prev.map(row => byId.has(row.id) ? { ...row, target: byId.get(row.id) as string } : row))
+    setRowsData(prev => prev.map(row => (byId.has(row.id)
+      ? { ...row, target: byId.get(row.id) as string, requiresManualCheck: false }
+      : row)))
   }
 
   const handleModelChange = (modelId: string): void => {
@@ -5735,7 +5789,7 @@ export default function App(): React.ReactElement {
     }
     const assignmentApplied = applyProjectLineAssignments(parsed.rows, projectLineAssignments)
     setLoadedSubtitleFile(parsed)
-    setRowsData(assignmentApplied.rows)
+    setRowsData(assignmentApplied.rows.map(row => ({ ...row, requiresManualCheck: false })))
     setSelectedId(assignmentApplied.rows[0].id)
     setSelectedLineIds(new Set([assignmentApplied.rows[0].id]))
     if (assignmentApplied.applied > 0) {

@@ -868,3 +868,27 @@
     - przypadki `\\Ncreate`, `\\NTino`, `{\\an8}Hello`, `{\\i1}Please{\\i0} wait`,
     - detekcja kontynuacji po przecinku,
     - brak laczenia po kropce.
+
+## 41) Heurystyka nazw nieprzetlumaczalnych (proper noun / special term) (v1.0.29)
+- Dodano modul `src/project/translationHeuristics.ts`:
+  - funkcja `isNonTranslatableProperNounLine(...)` wykrywa linie wygladajace jak nazwy wlasne/specjalne terminy (np. techniki, nazwy miejsc, nazwiska), na podstawie konserwatywnych heurystyk:
+    - krotka linia (1-4 slowa),
+    - brak typowych czasownikow,
+    - slowa title-case/UPPERCASE,
+    - silny sygnal typu wykrzyknik/pytajnik lub pojedyncza nazwa.
+- Integracja z pipeline tlumaczenia (`App.tsx`):
+  - przed wyslaniem linii do silnika tlumaczenia wykonywana jest heurystyka,
+  - jesli linia jest wykryta jako nieprzetlumaczalna:
+    - silnik nie jest wywolywany,
+    - `target` dostaje oryginalna tresc semantyczna (`row.source`),
+    - ustawiana jest flaga `requiresManualCheck = true`,
+    - status linii ustawiany jest na `draft` (do sprawdzenia).
+- UI:
+  - `LinesView` podswietla takie linie i pokazuje prefiks `⚠` w kolumnie tlumaczenia.
+- Zachowanie edycji recznej:
+  - reczna edycja tlumaczenia (`handleChangeLineTarget`) automatycznie czyści `requiresManualCheck`,
+  - to samo przy podmianie przez sugestie TM i korekcie plci.
+- Testy:
+  - dodano `src/project/translationHeuristics.spec.ts` z przypadkami:
+    - `Arena Rex!`, `Shadow Burst!`, `Tino!`, `Grand Palace` -> wykrywane,
+    - normalne zdania -> niewykrywane.
