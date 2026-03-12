@@ -60,7 +60,7 @@ import {
   type SubtitleToken as AssSubtitleToken,
 } from './project/assTranslationPreprocessor'
 import { isNonTranslatableProperNounLine } from './project/translationHeuristics'
-import { CharacterNotesModal } from './components/CharacterNotesModal'
+import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
   type CharacterAssignmentGridItem,
@@ -2870,6 +2870,43 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     }))
   }
 
+  const handleApplyBulkCharacterUserNotes = (
+    entries: Array<{ characterId: number; notes: string }>,
+    mode: BulkNotesApplyMode,
+  ): { applied: number; skipped: number } => {
+    const byId = new Map(entries.map(item => [item.characterId, item.notes.trim()]))
+    let applied = 0
+    let skipped = 0
+    setDraft(prev => ({
+      ...prev,
+      characters: prev.characters.map(character => {
+        const incoming = byId.get(character.id)?.trim()
+        if (!incoming) return character
+        const existing = character.profile.characterUserNotes.trim()
+        let nextNotes = existing
+
+        if (mode === 'overwrite_all') {
+          nextNotes = incoming
+        } else if (mode === 'fill_empty_only') {
+          if (!existing) nextNotes = incoming
+          else skipped += 1
+        } else {
+          if (!existing) nextNotes = incoming
+          else if (!existing.includes(incoming)) nextNotes = `${existing}\n\n${incoming}`.trim()
+          else skipped += 1
+        }
+
+        if (nextNotes === existing) return character
+        applied += 1
+        return {
+          ...character,
+          profile: mergeCharacterNotesAnalysisIntoProfile(character.profile, nextNotes),
+        }
+      }),
+    }))
+    return { applied, skipped }
+  }
+
   const handleLoadCast = async (anime: AniListAnimeResult): Promise<void> => {
     try {
       setIsLoadingCast(true)
@@ -3540,6 +3577,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
           }))}
           onClose={() => setCharacterNotesOpen(false)}
           onChangeNotes={handleChangeCharacterUserNotes}
+          onApplyBulkNotes={handleApplyBulkCharacterUserNotes}
         />
       </div>
     </div>

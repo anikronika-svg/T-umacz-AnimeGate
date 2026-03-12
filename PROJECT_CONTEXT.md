@@ -935,3 +935,30 @@
   - przed Krok 0 / przed `Wczytaj` lista dialogow jest pusta,
   - po `Wczytaj`/`Utworz projekt` linie pojawiaja sie dopiero po wczytaniu ASS,
   - powrot do Kroku 0 czyści stan i nie zostawia danych poprzedniego projektu w UI.
+
+## 44) Masowe wklejanie notatek postaci (bulk import) (v1.0.32)
+- Dodano nowy parser: `src/project/bulkCharacterNotesParser.ts`.
+  - Wejscie: surowy tekst + lista postaci projektu.
+  - Dzialanie:
+    - wykrywa naglowki sekcji jako potencjalne nazwy postaci,
+    - dopasowuje nazwy przez `resolveCharacterByName` (pelna nazwa, aliasy, imie/nazwisko, odwrocona kolejnosc),
+    - zbiera kolejne linie jako opis do nastepnego naglowka,
+    - zwraca wynik: `matched` + `unmatchedSections` + `totalSections`.
+- Dodano testy parsera: `src/project/bulkCharacterNotesParser.spec.ts`.
+  - scenariusze: poprawny rozdzial sekcji + nierozpoznane naglowki.
+- Rozszerzono UI modala notatek: `src/components/CharacterNotesModal.tsx`.
+  - nowy przycisk: `Wklej zbiorcze notatki`,
+  - nowy modal importu z duzym textarea,
+  - akcja `Rozdziel notatki` + podsumowanie:
+    - liczba sekcji,
+    - liczba dopasowanych postaci,
+    - lista nierozpoznanych naglowkow,
+  - akcja `Zastosuj do postaci`.
+- Dodano bezpieczne tryby zapisu notatek:
+  - `safe_append` (domyslny): nadpisuje puste, do istniejacych dopisuje,
+  - `fill_empty_only`: uzupelnia tylko puste pola,
+  - `overwrite_all`: nadpisuje wszystko.
+- Integracja w `src/App.tsx` (CharacterModal):
+  - nowy handler `handleApplyBulkCharacterUserNotes`,
+  - po zastosowaniu notatek kazda zmiana przechodzi przez `mergeCharacterNotesAnalysisIntoProfile`,
+    wiec dalej zasila Krok 3 i prompt tlumaczenia tak samo jak reczne notatki.
