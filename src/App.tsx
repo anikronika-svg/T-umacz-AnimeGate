@@ -239,16 +239,6 @@ interface TranslationAttemptResult {
 const DEFAULT_TRANSLATION_BATCH_SIZE = 20
 const DEFAULT_DELAY_BETWEEN_BATCHES_MS = 1800
 
-const ROWS: DialogRow[] = [
-  { id: 1, pl: 'done', start: '0:00:01.50', end: '0:00:04.20', style: 'Default', character: 'Haruto', source: 'ちょっと待って！どこへ行くの？', sourceRaw: 'ちょっと待って！どこへ行くの？', target: 'Poczekaj chwilę! Dokąd idziesz?' },
-  { id: 2, pl: 'done', start: '0:00:05.00', end: '0:00:08.10', style: 'Default', character: 'Yuki', source: 'これは夢じゃないよ。本当のことだ。', sourceRaw: 'これは夢じゃないよ。本当のことだ。', target: 'To nie jest sen. To prawda.' },
-  { id: 3, pl: 'empty', start: '0:00:09.40', end: '0:00:12.00', style: 'Default', character: 'Haruto', source: '信じられない…本当にそうなの？', sourceRaw: '信じられない…本当にそうなの？', target: '' },
-  { id: 4, pl: 'draft', start: '0:00:13.20', end: '0:00:15.50', style: 'Narr', character: '', source: '俺はもう諦めない！', sourceRaw: '俺はもう諦めない！', target: 'Nie poddam się!' },
-  { id: 5, pl: 'empty', start: '0:00:17.00', end: '0:00:21.30', style: 'Default', character: 'Yuki', source: '彼女は泣いていた。静かに、一人で。', sourceRaw: '彼女は泣いていた。静かに、一人で。', target: '' },
-  { id: 6, pl: 'draft', start: '0:00:22.10', end: '0:00:24.80', style: 'Default', character: 'Sensei', source: 'どうしてこんなことに…', sourceRaw: 'どうしてこんなことに…', target: 'Dlaczego do tego doszło…' },
-  { id: 7, pl: 'done', start: '0:00:26.00', end: '0:00:28.00', style: 'Default', character: 'Haruto', source: '一緒に行こう！', sourceRaw: '一緒に行こう！', target: 'Chodźmy razem!' },
-]
-
 const BASE_PROJECT_CHARACTERS: Omit<CharacterStyleAssignment, 'style' | 'profile'>[] = [
   { id: 1, name: 'Haruto', gender: 'Male', avatarColor: '#4f8ad6' },
   { id: 2, name: 'Yuki', gender: 'Female', avatarColor: '#d781b9' },
@@ -3557,6 +3547,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
 }
 function LinesView({
   rows,
+  hasActiveProject,
   selectedId,
   selectedIds,
   translatingLineId,
@@ -3565,6 +3556,7 @@ function LinesView({
   getGenderForCharacter,
 }: {
   rows: DialogRow[]
+  hasActiveProject: boolean
   selectedId: number
   selectedIds: Set<number>
   translatingLineId: number | null
@@ -3597,6 +3589,11 @@ function LinesView({
         ))}
       </div>
       <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {rows.length === 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: C.textDim, fontSize: 13 }}>
+            {hasActiveProject ? 'Brak wczytanego pliku napisow. Otworz plik ASS, aby zobaczyc dialogi.' : 'Wczytaj lub utworz projekt, aby zobaczyc liste dialogow.'}
+          </div>
+        )}
         {rows.map(row => {
           const active = row.id === selectedId
           const marked = selectedIds.has(row.id)
@@ -3668,9 +3665,9 @@ export default function App(): React.ReactElement {
   const [seriesProjects, setSeriesProjects] = useState<SeriesProjectMeta[]>(() => loadSeriesProjectsCatalog())
   const [currentProjectId, setCurrentProjectId] = useState<string>(() => loadSeriesProjectsCatalog()[0]?.id ?? DEFAULT_PROJECT_ID)
   const [projectPickerId, setProjectPickerId] = useState<string>(() => loadSeriesProjectsCatalog()[0]?.id ?? DEFAULT_PROJECT_ID)
-  const [rowsData, setRowsData] = useState<DialogRow[]>(ROWS)
-  const [selectedId, setSelectedId] = useState(1)
-  const [selectedLineIds, setSelectedLineIds] = useState<Set<number>>(new Set([1]))
+  const [rowsData, setRowsData] = useState<DialogRow[]>([])
+  const [selectedId, setSelectedId] = useState(0)
+  const [selectedLineIds, setSelectedLineIds] = useState<Set<number>>(new Set())
   const [isTranslating, setIsTranslating] = useState(false)
   const [translatingLineId, setTranslatingLineId] = useState<number | null>(null)
   const [loadedFileName, setLoadedFileName] = useState('Brak pliku')
@@ -4257,7 +4254,18 @@ export default function App(): React.ReactElement {
     })
   }
 
+  const resetSubtitleWorkspaceState = (): void => {
+    setRowsData([])
+    setSelectedId(0)
+    setSelectedLineIds(new Set())
+    setLoadedSubtitleFile(null)
+    setLoadedFileName('Brak pliku')
+    setLoadedFilePath(null)
+    setProjectLineAssignments([])
+  }
+
   const hydrateFromDiskProject = (config: DiskProjectConfigV1, projectDir: string, configPath: string): void => {
+    resetSubtitleWorkspaceState()
     const hydrated = hydrateStateFromDiskProject(config)
     const projectId = sanitizeProjectId(hydrated.projectId) || hydrated.projectId
     const projectTitle = hydrated.title
@@ -4421,7 +4429,7 @@ export default function App(): React.ReactElement {
 
   const handleEnterProjectStep = (): void => {
     setActiveDiskProject(null)
-    setProjectLineAssignments([])
+    resetSubtitleWorkspaceState()
     setAssignmentImageCacheByName({})
     setActiveAssignmentCharacter('')
     setRecentCharacterHistory([])
@@ -6248,6 +6256,7 @@ export default function App(): React.ReactElement {
           />
           <LinesView
             rows={rowsData}
+            hasActiveProject={!!activeDiskProject}
             selectedId={selectedId}
             selectedIds={selectedLineIds}
             translatingLineId={translatingLineId}

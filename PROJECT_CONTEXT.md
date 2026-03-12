@@ -909,3 +909,29 @@
   - napisy (gora/dol) sa zawsze osadzone na obrazie wideo,
   - przy malym, srednim i duzym oknie pozostaja zakotwiczone i wycentrowane,
   - skalowanie okna nie wypycha napisow poza obraz.
+
+## 43) Fix: lista dialogow pusta przed wczytaniem projektu (v1.0.31)
+- Naprawiono stan startowy aplikacji:
+  - `rowsData` inicjalizuje sie teraz jako `[]` (bez danych demo),
+  - `selectedId` startuje od `0`,
+  - `selectedLineIds` startuje jako pusty `Set`.
+- Dodano jawny reset stanu obszaru napisow:
+  - nowa funkcja `resetSubtitleWorkspaceState()` czyści:
+    - `rowsData`,
+    - `selectedId`,
+    - `selectedLineIds`,
+    - `loadedSubtitleFile`,
+    - `loadedFileName`,
+    - `loadedFilePath`,
+    - `projectLineAssignments`.
+- Reset jest wykonywany:
+  - przy hydracji projektu z dysku (`hydrateFromDiskProject`) przed zaladowaniem metadanych,
+  - przy powrocie do Kroku 0 (`handleEnterProjectStep`).
+- `LinesView`:
+  - dodano warunkowy placeholder zamiast linii, gdy `rowsData.length === 0`:
+    - bez aktywnego projektu: `Wczytaj lub utworz projekt, aby zobaczyc liste dialogow.`,
+    - z aktywnym projektem, ale bez ASS: `Brak wczytanego pliku napisow. Otworz plik ASS, aby zobaczyc dialogi.`
+- Efekt:
+  - przed Krok 0 / przed `Wczytaj` lista dialogow jest pusta,
+  - po `Wczytaj`/`Utworz projekt` linie pojawiaja sie dopiero po wczytaniu ASS,
+  - powrot do Kroku 0 czyści stan i nie zostawia danych poprzedniego projektu w UI.
