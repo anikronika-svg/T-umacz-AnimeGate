@@ -28,6 +28,13 @@ function renderFatalStartupError(source: string, message: string): void {
   `
 }
 
+function isControlledCancellation(reason: unknown): boolean {
+  const text = reason instanceof Error
+    ? `${reason.name}: ${reason.message}`
+    : String(reason ?? '')
+  return /Tłumaczenie zatrzymane przez użytkownika|Tlumaczenie zatrzymane przez uzytkownika|translation stopped by user|cancelled|canceled|AbortError/i.test(text)
+}
+
 window.addEventListener('error', event => {
   const message = event.error instanceof Error
     ? `${event.error.name}: ${event.error.message}`
@@ -37,6 +44,11 @@ window.addEventListener('error', event => {
 })
 
 window.addEventListener('unhandledrejection', event => {
+  if (isControlledCancellation(event.reason)) {
+    event.preventDefault()
+    console.info('[renderer-unhandled-rejection-ignored]', event.reason)
+    return
+  }
   const reason = event.reason instanceof Error
     ? `${event.reason.name}: ${event.reason.message}`
     : String(event.reason)

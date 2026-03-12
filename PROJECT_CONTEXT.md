@@ -1042,3 +1042,23 @@
     - over-aggressive rewrite detection,
     - punctuation tone stabilization,
     - chunk context hints dla linii z tagami ASS.
+
+## 48) Hotfix: STOP tłumaczenia jako stan kontrolowany (v1.0.35)
+- Naprawiono krytyczny błąd renderera:
+  - `window.unhandledrejection` nie przełącza już aplikacji na ekran krytyczny przy kontrolowanym anulowaniu tłumaczenia przez STOP.
+- `src/App.tsx`:
+  - dodano stan `translationCancelled`,
+  - pipeline `runTranslationByLineIds` ma teraz jawny `catch` dla anulowania (`cancelled`/`AbortError`) i nie przepuszcza tego jako nieobsłużonego wyjątku,
+  - anulowanie jest logowane jako normalny stan operacyjny, bez crashu,
+  - wywołania `handleTranslateAll` i `handleTranslateSelected` mają bezpieczny `.catch(...)` na końcu (brak nieobsłużonych Promise rejection),
+  - STOP ustawia `translationCancelled` i przerywa aktywny `AbortController`.
+- UI:
+  - dodano jawny status tłumaczenia obok aktywnego stylu:
+    - `w toku`,
+    - `anulowane (STOP)`,
+    - `bezczynne`.
+- `src/main.tsx`:
+  - globalny listener `unhandledrejection` ignoruje kontrolowane anulowania (frazy cancel/abort/„Tlumaczenie zatrzymane przez uzytkownika”) i nie renderuje ekranu „Krytyczny błąd startu renderera”.
+- Wynik:
+  - STOP tłumaczenia działa jako normalny stan aplikacji,
+  - brak krytycznego crasha renderera przy przerwaniu tłumaczenia przez użytkownika.

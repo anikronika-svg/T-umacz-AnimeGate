@@ -3718,6 +3718,7 @@ export default function App(): React.ReactElement {
   const [selectedId, setSelectedId] = useState(0)
   const [selectedLineIds, setSelectedLineIds] = useState<Set<number>>(new Set())
   const [isTranslating, setIsTranslating] = useState(false)
+  const [translationCancelled, setTranslationCancelled] = useState(false)
   const [translatingLineId, setTranslatingLineId] = useState<number | null>(null)
   const [loadedFileName, setLoadedFileName] = useState('Brak pliku')
   const [loadedFilePath, setLoadedFilePath] = useState<string | null>(null)
@@ -4600,6 +4601,13 @@ export default function App(): React.ReactElement {
     }
   }
 
+  const isTranslationCancelledError = (error: unknown): boolean => {
+    if (error instanceof ProviderError && error.code === 'cancelled') return true
+    if (error instanceof DOMException && error.name === 'AbortError') return true
+    const message = error instanceof Error ? error.message : String(error ?? '')
+    return /Tlumaczenie zatrzymane przez uzytkownika|translation stopped by user|cancelled|canceled/i.test(message)
+  }
+
   const [providerId, ...modelParts] = selectedModelId.split(':')
   const selectedModelName = modelParts.join(':')
 
@@ -5430,6 +5438,7 @@ export default function App(): React.ReactElement {
   const runTranslationByLineIds = async (lineIds: number[]): Promise<void> => {
     if (isTranslating || !lineIds.length) return
     stopTranslationRef.current = false
+    setTranslationCancelled(false)
     setIsTranslating(true)
     setTranslatingLineId(null)
     const requestedLineIds = [...new Set(lineIds)]
@@ -5468,6 +5477,7 @@ export default function App(): React.ReactElement {
 
     appendTranslationLog(`Preflight: translatable=${translatableIds.length}, bez-tekstu=${nonTranslatableIds.length}, brak-wiersza=${missingRowsFromInput.length}`)
 
+    let cancelledByException = false
     try {
       // --- PRZEBIEG 1: glowny ---
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
@@ -5758,8 +5768,16 @@ export default function App(): React.ReactElement {
       if (missingTranslationIds.length > 0) {
         appendTranslationLog(`Brak tlumaczenia po walidacji: ${missingTranslationIds.join(', ')}`)
       }
+    } catch (error) {
+      if (isTranslationCancelledError(error)) {
+        cancelledByException = true
+        setTranslationCancelled(true)
+        appendTranslationLog('Tlumaczenie anulowane kontrolowanie (STOP).')
+      } else {
+        throw error
+      }
     } finally {
-      const stoppedByUser = stopTranslationRef.current
+      const stoppedByUser = stopTranslationRef.current || cancelledByException
       setTranslatingLineId(null)
       setIsTranslating(false)
       stopTranslationRef.current = false
@@ -5769,17 +5787,26 @@ export default function App(): React.ReactElement {
   }
 
   const handleTranslateAll = (): void => {
-    void runTranslationByLineIds(rowsData.map(row => row.id))
+    void runTranslationByLineIds(rowsData.map(row => row.id)).catch(error => {
+      setTranslationCancelled(false)
+      appendTranslationLog(`BLAD krytyczny pipeline tlumaczenia: ${error instanceof Error ? error.message : String(error)}`)
+      console.error('[translation-pipeline-error]', error)
+    })
   }
 
   const handleTranslateSelected = (): void => {
     const ids = rowsData
       .filter(row => selectedLineIds.has(row.id))
       .map(row => row.id)
-    void runTranslationByLineIds(ids)
+    void runTranslationByLineIds(ids).catch(error => {
+      setTranslationCancelled(false)
+      appendTranslationLog(`BLAD krytyczny pipeline tlumaczenia: ${error instanceof Error ? error.message : String(error)}`)
+      console.error('[translation-pipeline-error]', error)
+    })
   }
 
   const handleStopTranslate = (): void => {
+    setTranslationCancelled(true)
     stopTranslationRef.current = true
     activeTranslationAbortRef.current?.abort()
     activeTranslationAbortRef.current = null
@@ -6352,6 +6379,11 @@ export default function App(): React.ReactElement {
           />
           <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#1b1c24' }}>
             Aktywny styl: <strong style={{ color: C.accentY }}>{effectiveStyleLabel}</strong>
+            {' · '}
+            Status tlumaczenia:{' '}
+            <strong style={{ color: isTranslating ? C.accent : (translationCancelled ? C.accentY : C.accentG) }}>
+              {isTranslating ? 'w toku' : (translationCancelled ? 'anulowane (STOP)' : 'bezczynne')}
+            </strong>
           </div>
           <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#171920', maxHeight: 62, overflow: 'auto' }}>
             Log tlumaczenia: {translationLogs[0] ?? 'brak'}
