@@ -172,18 +172,6 @@ function saveSeriesProjectsCatalog(catalog: SeriesProjectMeta[]): void {
   localStorage.setItem(SERIES_PROJECTS_STORAGE_KEY, JSON.stringify(catalog))
 }
 
-function loadActiveDiskProject(): ActiveDiskProject | null {
-  try {
-    const raw = localStorage.getItem(ACTIVE_DISK_PROJECT_STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as ActiveDiskProject
-    if (!parsed?.projectDir || !parsed?.projectId) return null
-    return parsed
-  } catch {
-    return null
-  }
-}
-
 function saveActiveDiskProject(project: ActiveDiskProject | null): void {
   if (!project) {
     localStorage.removeItem(ACTIVE_DISK_PROJECT_STORAGE_KEY)
@@ -1138,6 +1126,7 @@ function LeftSidebar({
   onSelectProjectId,
   onOpenProjectStep,
   onLoadProject,
+  hasActiveProject,
   assignmentCharacters,
   selectedLineCount,
   activeAssignmentCharacter,
@@ -1167,6 +1156,7 @@ function LeftSidebar({
   onSelectProjectId: (projectId: string) => void
   onOpenProjectStep: () => void
   onLoadProject: () => void
+  hasActiveProject: boolean
   assignmentCharacters: CharacterAssignmentGridItem[]
   selectedLineCount: number
   activeAssignmentCharacter: string
@@ -1215,6 +1205,7 @@ function LeftSidebar({
       </div>
 
       <CharacterAssignmentGrid
+        projectLoaded={hasActiveProject}
         characters={assignmentCharacters}
         selectedLineCount={selectedLineCount}
         activeCharacterName={activeAssignmentCharacter}
@@ -3710,14 +3701,14 @@ export default function App(): React.ReactElement {
   const [translationLogs, setTranslationLogs] = useState<string[]>([])
   const [sourceLang, setSourceLang] = useState('en')
   const [targetLang, setTargetLang] = useState('pl')
-  const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => loadProjectStyleSettings(currentProjectId, BASE_PROJECT_CHARACTERS))
+  const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => createProjectStyleSettings(currentProjectId, []))
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
-  const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(() => loadActiveDiskProject())
+  const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(null)
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
   const [recentCharacterHistory, setRecentCharacterHistory] = useState<string[]>([])
   const [assignmentImageCacheByName, setAssignmentImageCacheByName] = useState<Record<string, string>>({})
-  const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(() => !loadActiveDiskProject())
+  const [isProjectStepOpen, setProjectStepOpen] = useState<boolean>(true)
   const [projectStepStatus, setProjectStepStatus] = useState('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
   const [newProjectTitle, setNewProjectTitle] = useState('')
   const [newProjectBaseDir, setNewProjectBaseDir] = useState('')
@@ -3761,6 +3752,7 @@ export default function App(): React.ReactElement {
   }, [seriesProjects])
 
   useEffect(() => {
+    if (!activeDiskProject) return
     const active = seriesProjects.find(project => project.id === currentProjectId)
     if (!active) return
 
@@ -3792,7 +3784,7 @@ export default function App(): React.ReactElement {
         projects: [...prev.projects, { id: active.id, name: active.title, lastUpdated: active.lastUpdated.slice(0, 10) }],
       }
     })
-  }, [currentProjectId, seriesProjects])
+  }, [activeDiskProject, currentProjectId, seriesProjects])
 
   useEffect(() => {
     // Fallback ustawiamy tylko gdy aktualnie wybrany silnik nie istnieje na liscie.
@@ -3876,25 +3868,10 @@ export default function App(): React.ReactElement {
   }, [])
 
   useEffect(() => {
-    const remembered = loadActiveDiskProject()
-    if (!remembered || !window.electronAPI?.openProject) return
-    let cancelled = false
-    void window.electronAPI.openProject(remembered.projectDir).then(result => {
-      if (cancelled) return
-      hydrateFromDiskProject(result.config, result.projectDir, result.configPath)
-    }).catch(error => {
-      if (cancelled) return
-      const message = error instanceof Error ? error.message : 'Nieznany blad'
-      setProjectStepStatus(`Nie mozna automatycznie otworzyc ostatniego projektu: ${message}`)
-      setProjectStepOpen(true)
-      setActiveDiskProject(null)
-    })
-    return () => {
-      cancelled = true
+    if (!activeDiskProject) {
+      setAssignmentImageCacheByName({})
+      return
     }
-  }, [])
-
-  useEffect(() => {
     const fromSettings = buildImageCacheFromCharacters(styleSettings.characters)
     try {
       const raw = localStorage.getItem(charImageCacheKey(currentProjectId))
@@ -3903,10 +3880,11 @@ export default function App(): React.ReactElement {
     } catch {
       setAssignmentImageCacheByName(fromSettings)
     }
-  }, [currentProjectId, styleSettings.updatedAt])
+  }, [activeDiskProject, currentProjectId, styleSettings.updatedAt])
 
   const selectedRow = rowsData.find(row => row.id === selectedId)
   const assignmentCharacters = useMemo<CharacterAssignmentGridItem[]>(() => {
+    if (!activeDiskProject) return []
     const deduped = new Map<string, CharacterAssignmentGridItem>()
     styleSettings.characters.forEach(character => {
       const name = character.name.trim()
@@ -3923,8 +3901,9 @@ export default function App(): React.ReactElement {
       })
     })
     return [...deduped.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl', { sensitivity: 'base' }))
-  }, [styleSettings.characters, assignmentImageCacheByName])
+  }, [activeDiskProject, styleSettings.characters, assignmentImageCacheByName])
   const assignmentSuggestions = useMemo<CharacterAssignmentSuggestion[]>(() => {
+    if (!activeDiskProject) return []
     return buildCharacterAssignmentSuggestions({
       rows: rowsData,
       selectedLineId: selectedId,
@@ -3932,7 +3911,7 @@ export default function App(): React.ReactElement {
       recentCharacterHistory,
       lastUsedCharacter: activeAssignmentCharacter,
     })
-  }, [rowsData, selectedId, assignmentCharacters, recentCharacterHistory, activeAssignmentCharacter])
+  }, [activeDiskProject, rowsData, selectedId, assignmentCharacters, recentCharacterHistory, activeAssignmentCharacter])
   const activeSeriesMeta = useMemo(
     () => seriesProjects.find(project => project.id === currentProjectId) ?? null,
     [seriesProjects, currentProjectId],
@@ -4014,6 +3993,7 @@ export default function App(): React.ReactElement {
   }, [styleSettings.characters])
 
   useEffect(() => {
+    if (!activeDiskProject) return
     setStyleSettings(prev => {
       const existingNames = new Set(prev.characters.map(character => normalizeCharacterName(character.name.trim())))
       const queuedNames = new Set<string>()
@@ -4044,7 +4024,7 @@ export default function App(): React.ReactElement {
       saveProjectStyleSettings(next)
       return next
     })
-  }, [rowsData])
+  }, [activeDiskProject, rowsData])
 
   const effectiveStyleLabel = useMemo(() => {
     if (!selectedRow?.character) return getStyleLabel(styleSettings.globalStyle)
@@ -4447,6 +4427,17 @@ export default function App(): React.ReactElement {
       const message = error instanceof Error ? error.message : 'Nie udalo sie otworzyc projektu.'
       setProjectStepStatus(`BLAD otwierania projektu: ${message}`)
     }
+  }
+
+  const handleEnterProjectStep = (): void => {
+    setActiveDiskProject(null)
+    setProjectLineAssignments([])
+    setAssignmentImageCacheByName({})
+    setActiveAssignmentCharacter('')
+    setRecentCharacterHistory([])
+    setStyleSettings(createProjectStyleSettings(currentProjectId, []))
+    setProjectStepStatus('Wybierz lub utworz projekt, aby zapisac ustawienia na dysku.')
+    setProjectStepOpen(true)
   }
 
   const handleOpenCharactersModal = (): void => {
@@ -6155,8 +6146,9 @@ export default function App(): React.ReactElement {
           projectOptions={seriesProjects}
           currentProjectId={projectPickerId}
           onSelectProjectId={setProjectPickerId}
-          onOpenProjectStep={() => setProjectStepOpen(true)}
+          onOpenProjectStep={handleEnterProjectStep}
           onLoadProject={() => { void handleLoadDiskProjectFromButton() }}
+          hasActiveProject={!!activeDiskProject}
           assignmentCharacters={assignmentCharacters}
           selectedLineCount={selectedLineIds.size}
           activeAssignmentCharacter={activeAssignmentCharacter}

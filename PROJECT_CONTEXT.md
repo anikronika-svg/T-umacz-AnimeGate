@@ -786,3 +786,26 @@
     - `N` (Neutralna / bez zmiany),
   - zmiana jest aktualizowana jednoczesnie w `workerCast` i `draft.characters`,
   - dane zapisuja sie do projektu i wracaja po ponownym otwarciu.
+
+## 38) Fix stanu panelu postaci przed `Wczytaj` projektu (v1.0.26)
+- Problem:
+  - panel `Postacie do przypisywania` renderowal dane zanim byl aktywny projekt, co powodowalo widok kart/sugestii na "zimnym" starcie.
+- Naprawa logiki stanu:
+  - startup bez aktywnego projektu:
+    - `activeDiskProject` startuje jako `null`,
+    - modal Kroku 0 (`isProjectStepOpen`) startuje jako `true`,
+    - usunieto automatyczne otwieranie zapamietanego projektu przy starcie.
+  - panel postaci renderuje dane tylko dla aktywnego projektu:
+    - `assignmentCharacters = []` i `assignmentSuggestions = []` gdy `activeDiskProject === null`,
+    - `CharacterAssignmentGrid` dostaje `projectLoaded` i przy `false` pokazuje tylko komunikat:
+      - `Wczytaj lub utworz projekt, aby zobaczyc postacie do przypisywania.`
+  - hydracja/uzupelnianie postaci z linii ASS jest zablokowane bez aktywnego projektu.
+- Reset przy przejsciu do Kroku 0:
+  - dodano `handleEnterProjectStep`, ktory czysci stan projektowy panelu:
+    - `activeDiskProject`,
+    - `projectLineAssignments`,
+    - `assignmentImageCacheByName`,
+    - `activeAssignmentCharacter`,
+    - `recentCharacterHistory`,
+    - `styleSettings` (do pustego kontekstu bez postaci),
+  - po tym panel wraca do stanu pustego.
