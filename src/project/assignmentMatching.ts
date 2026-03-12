@@ -1,9 +1,10 @@
-import { normalizeCharacterAlias } from './characterNameMatching'
+import { normalizeCharacterAlias, parseCharacterSpeaker } from './characterNameMatching'
 
 export interface ProjectLineAssignment {
   lineId: number
   rawCharacter: string
   resolvedCharacterName: string
+  speakerModeTag?: string
   lineKey?: string
 }
 
@@ -40,12 +41,16 @@ export function buildProjectLineAssignments(
 ): ProjectLineAssignment[] {
   return rows
     .filter(row => row.character.trim().length > 0)
-    .map(row => ({
-      lineId: row.id,
-      rawCharacter: row.character,
-      resolvedCharacterName: resolveCharacterName(row.character),
-      lineKey: buildLineKey(row),
-    }))
+    .map(row => {
+      const parsedSpeaker = parseCharacterSpeaker(row.character)
+      return {
+        lineId: row.id,
+        rawCharacter: row.character,
+        resolvedCharacterName: resolveCharacterName(parsedSpeaker.baseName || row.character),
+        speakerModeTag: parsedSpeaker.modeTagRaw || undefined,
+        lineKey: buildLineKey(row),
+      }
+    })
 }
 
 export function applyProjectLineAssignments<T extends AssignmentRowInput>(

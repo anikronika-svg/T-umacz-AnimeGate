@@ -46,6 +46,7 @@ import {
 import {
   normalizeCharacterAlias as normalizeCharacterAliasByRules,
   normalizeCharacterName as normalizeCharacterNameByRules,
+  parseCharacterSpeaker,
   resolveCharacterByName,
   stripCharacterTechnicalMetadata,
 } from './project/characterNameMatching'
@@ -232,6 +233,7 @@ interface TranslationRequestContext {
   isShortUtterance: boolean
   chunkPreviousHint: string
   chunkNextHint: string
+  speakerModeTag: string
 }
 
 type TranslatorFn = (
@@ -763,17 +765,19 @@ function buildImageCacheFromCharacters(
 function resolveGenderForCharacterName(
   characterName: string,
   characters: Array<{ name: string; gender: CharacterGender }>,
+  aliasMap?: Map<string, string>,
 ): CharacterGender {
-  const match = resolveCharacterForLineName(characterName, characters)
+  const match = resolveCharacterForLineName(characterName, characters, aliasMap)
   return match?.gender ?? 'Unknown'
 }
 
 function resolveCharacterForLineName<T extends { name: string; gender: CharacterGender }>(
   characterName: string,
   characters: T[],
+  aliasMap?: Map<string, string>,
 ): T | null {
-  return resolveCharacterByName(characterName, characters, { preferKnownGender: true })
-    ?? resolveCharacterByName(characterName, characters)
+  return resolveCharacterByName(characterName, characters, { preferKnownGender: true, aliasMap })
+    ?? resolveCharacterByName(characterName, characters, { aliasMap })
 }
 
 function numericIdFromName(seed: string): number {
@@ -4025,7 +4029,7 @@ export default function App(): React.ReactElement {
     }
   }, [selectedId, lineTimingById])
   const selectedCharacter = selectedRow?.character
-    ? resolveCharacterForLineName(selectedRow.character, styleSettings.characters)
+    ? resolveCharacterForLineName(selectedRow.character, styleSettings.characters, identityAliasMap)
     : null
   const projectNameById = useMemo(
     () => {
@@ -4043,6 +4047,24 @@ export default function App(): React.ReactElement {
     })
     return map
   }, [styleSettings.characters])
+
+  const identityAliasMap = useMemo(() => {
+    const map = new Map<string, string>()
+    projectLineAssignments.forEach(assignment => {
+      const canonical = assignment.resolvedCharacterName?.trim()
+      if (!canonical) return
+      const alias = normalizeCharacterAlias(assignment.rawCharacter || '')
+      if (!alias) return
+      if (!map.has(alias)) {
+        map.set(alias, canonical)
+      }
+      const normalized = normalizeCharacterName(assignment.rawCharacter || '')
+      if (normalized && !map.has(normalized)) {
+        map.set(normalized, canonical)
+      }
+    })
+    return map
+  }, [projectLineAssignments])
 
   useEffect(() => {
     if (!activeDiskProject) return
@@ -4090,7 +4112,8 @@ export default function App(): React.ReactElement {
   void styleContext
 
   const getTranslationContextForRow = (row: DialogRow): TranslationRequestContext => {
-    const matchedCharacter = resolveCharacterForLineName(row.character.trim(), styleSettings.characters)
+    const speakerMeta = parseCharacterSpeaker(row.character.trim())
+    const matchedCharacter = resolveCharacterForLineName(speakerMeta.baseName, styleSettings.characters, identityAliasMap)
     const normalizedName = normalizeCharacterName(row.character.trim())
     const character = matchedCharacter ?? styleSettings.characters.find(item => normalizeCharacterName(item.name) === normalizedName)
     const gender = character?.gender ?? characterGenderByName.get(normalizedName) ?? 'Unknown'
@@ -4127,6 +4150,7 @@ export default function App(): React.ReactElement {
       isShortUtterance: false,
       chunkPreviousHint: '',
       chunkNextHint: '',
+      speakerModeTag: speakerMeta.modeTagRaw,
     }
   }
 
@@ -4291,7 +4315,7 @@ export default function App(): React.ReactElement {
     const meta = seriesProjects.find(project => project.id === projectId)
     const title = titleOverride ?? meta?.title ?? projectId
     const lineCharacterAssignments = buildProjectLineAssignments(rowsData, rawCharacter => (
-      resolveCharacterForLineName(rawCharacter, styleSettings.characters)?.name ?? rawCharacter
+      resolveCharacterForLineName(rawCharacter, styleSettings.characters, identityAliasMap)?.name ?? rawCharacter
     ))
 
     return mapAppStateToProjectConfig({
@@ -4358,6 +4382,7 @@ export default function App(): React.ReactElement {
         lineId: item.lineId,
         rawCharacter: item.rawCharacter,
         resolvedCharacterName: item.resolvedCharacterName,
+        speakerModeTag: item.speakerModeTag,
         lineKey: item.lineKey,
       })),
     )
@@ -4520,7 +4545,7 @@ export default function App(): React.ReactElement {
           : row
       ))
       const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
-        resolveCharacterForLineName(rawCharacter, styleSettings.characters)?.name ?? rawCharacter
+        resolveCharacterForLineName(rawCharacter, styleSettings.characters, identityAliasMap)?.name ?? rawCharacter
       ))
       setProjectLineAssignments(nextAssignments)
       return nextRows
@@ -4545,7 +4570,7 @@ export default function App(): React.ReactElement {
           : row
       ))
       const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
-        resolveCharacterForLineName(rawCharacter, styleSettings.characters)?.name ?? rawCharacter
+        resolveCharacterForLineName(rawCharacter, styleSettings.characters, identityAliasMap)?.name ?? rawCharacter
       ))
       setProjectLineAssignments(nextAssignments)
       return nextRows
@@ -4905,6 +4930,7 @@ export default function App(): React.ReactElement {
     'Style priority: manual character fields (Krok 3) > user character notes (Krok 2) > character type/subtype > saved project fields > auto analysis > character gender > global style base.',
     context?.characterName ? `Character: ${context.characterName}` : '',
     context?.gender ? `Character gender: ${context.gender}` : '',
+    context?.speakerModeTag ? `Speaker mode tag: ${context.speakerModeTag}` : '',
     context?.effectiveStyle ? `Active style: ${context.effectiveStyle} (${context.effectiveStyleSource})` : '',
     context?.effectiveStyle ? `Style directive: ${styleDirective(context.effectiveStyle)}` : '',
     context?.archetypeLabel ? `Character archetype: ${context.archetypeLabel} (${context.archetype})` : '',
@@ -6375,7 +6401,7 @@ export default function App(): React.ReactElement {
             translatingLineId={translatingLineId}
             onSelect={handleSelectLine}
             onActivateLine={handleActivateLine}
-            getGenderForCharacter={(characterName) => resolveGenderForCharacterName(characterName.trim(), styleSettings.characters)}
+            getGenderForCharacter={(characterName) => resolveGenderForCharacterName(characterName.trim(), styleSettings.characters, identityAliasMap)}
           />
           <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#1b1c24' }}>
             Aktywny styl: <strong style={{ color: C.accentY }}>{effectiveStyleLabel}</strong>

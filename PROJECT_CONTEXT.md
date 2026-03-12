@@ -1062,3 +1062,40 @@
 - Wynik:
   - STOP tłumaczenia działa jako normalny stan aplikacji,
   - brak krytycznego crasha renderera przy przerwaniu tłumaczenia przez użytkownika.
+
+## 49) Character identity resolution hardening (v1.0.36)
+- Naprawiono rdzeniowy problem dopasowania tozsamosci postaci po wczytaniu projektu:
+  - dopasowanie obejmuje pelna nazwe, samo imie, samo nazwisko, odwrocona kolejnosc imie/nazwisko oraz aliasy zapisane w projekcie.
+- `src/project/characterNameMatching.ts`:
+  - dodano parser `parseCharacterSpeaker(...)`, ktory rozdziela:
+    - `baseName` (tozsamosc postaci),
+    - `modeTagRaw` (znacznik w nawiasie),
+    - `modeTag` (klasyfikacja: narration/thought/other).
+  - resolver nazw (`resolveCharacterByName`) korzysta teraz opcjonalnie z aliasMap pochodzacej z zapisanych mapowan projektu.
+  - rozszerzono normalizacje o dodatkowe sufiksy techniczne i warianty PL/EN.
+- `src/project/assignmentMatching.ts`:
+  - przy budowie assignmentow zapisywany jest `speakerModeTag` (opcjonalnie),
+  - `resolvedCharacterName` wyliczany jest z bazowej nazwy postaci (bez znacznika nawiasowego).
+- `src/project/projectMapper.ts`:
+  - schema pozostaje kompatybilne (v1), dodano opcjonalne pole `speakerModeTag` w `lineCharacterAssignments`.
+- `src/App.tsx`:
+  - dodano `identityAliasMap` budowany z zapisanych assignmentow projektu (`rawCharacter -> resolvedCharacterName`),
+  - resolver postaci i płci przy renderze/tłumaczeniu korzysta z aliasMap + parsera speaker tag,
+  - do kontekstu tlumaczenia dodano `speakerModeTag` (meta, bez psucia dopasowania tozsamosci),
+  - po hydracji projektu przywracane jest tez opcjonalne `speakerModeTag` z assignmentow.
+- Efekt:
+  - `Tino`, `Shade`, `Tino Shade`, `Shade Tino` oraz warianty typu `Tino (N)` / `Tino (M)` mapuja sie do tej samej postaci,
+  - płeć postaci wraca i jest stosowana stabilnie po wczytaniu projektu,
+  - znaczniki w nawiasach sa traktowane jako meta-informacja, nie psuja identyfikacji.
+
+- Testy regresji:
+  - rozszerzono `src/project/characterNameMatching.spec.ts`:
+    - pelna nazwa,
+    - imie,
+    - nazwisko,
+    - odwrocona kolejnosc,
+    - warianty z nawiasami (`(N)`, `(M)`, `(myśli)`, `(narracja)`),
+    - wykorzystanie `aliasMap`.
+  - dodano `src/project/assignmentMatching.spec.ts`:
+    - zapis `speakerModeTag`,
+    - odtworzenie canonical postaci z wariantu nawiasowego po wczytaniu assignmentow.

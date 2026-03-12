@@ -64,6 +64,7 @@ export interface DiskProjectConfigV1 {
       lineId: number
       rawCharacter: string
       resolvedCharacterName: string
+      speakerModeTag?: string
       lineKey?: string
     }>
   }
@@ -96,6 +97,7 @@ export interface BuildProjectConfigInput {
     lineId: number
     rawCharacter: string
     resolvedCharacterName: string
+    speakerModeTag?: string
     lineKey?: string
   }>
 }

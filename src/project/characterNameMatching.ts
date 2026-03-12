@@ -1,20 +1,24 @@
 import type { CharacterGender } from '../translationStyle'
 
 const TECHNICAL_CHARACTER_SUFFIXES = new Set([
+  'n',
   'm',
   'f',
   'male',
   'female',
-  'whisper',
-  'whispers',
-  'thought',
-  'thinks',
-  'thinking',
-  'monologue',
-  'narration',
+  'narracja',
+  'narratora',
   'narrator',
+  'mysli',
+  'myśli',
+  'monolog',
+  'narration',
+  'thought',
+  'thinking',
   'inner',
   'voice',
+  'whisper',
+  'whispers',
   'off',
   'bg',
   'background',
@@ -27,6 +31,15 @@ const TECHNICAL_CHARACTER_SUFFIXES = new Set([
   'version',
 ])
 
+export type SpeakerModeTag = 'narration' | 'thought' | 'other' | null
+
+export interface ParsedCharacterSpeaker {
+  raw: string
+  baseName: string
+  modeTagRaw: string
+  modeTag: SpeakerModeTag
+}
+
 function normalizeToken(value: string): string {
   return value
     .toLowerCase()
@@ -36,12 +49,8 @@ function normalizeToken(value: string): string {
 }
 
 export function stripCharacterTechnicalMetadata(value: string): string {
-  const withoutBrackets = value
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\[[^\]]*]/g, ' ')
-    .replace(/\{[^}]*\}/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const parsed = parseCharacterSpeaker(value)
+  const withoutBrackets = parsed.baseName
 
   if (!withoutBrackets) return ''
 
@@ -53,6 +62,56 @@ export function stripCharacterTechnicalMetadata(value: string): string {
   }
 
   return words.join(' ').trim()
+}
+
+function normalizeModeToken(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim()
+}
+
+function classifySpeakerModeTag(value: string): SpeakerModeTag {
+  const token = normalizeModeToken(value)
+  if (!token) return null
+  if (token === 'n' || token.startsWith('narr') || token === 'narrator') return 'narration'
+  if (token === 'm' || token.startsWith('mysl') || token.startsWith('thought') || token.startsWith('think')) return 'thought'
+  return 'other'
+}
+
+export function parseCharacterSpeaker(value: string): ParsedCharacterSpeaker {
+  const raw = value ?? ''
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return {
+      raw,
+      baseName: '',
+      modeTagRaw: '',
+      modeTag: null,
+    }
+  }
+
+  const bracketMatch = trimmed.match(/^(.*?)(?:\s*[\(\[\{]\s*([^\)\]\}]+)\s*[\)\]\}])\s*$/u)
+  const baseName = (
+    bracketMatch?.[1]
+      ? bracketMatch[1]
+      : trimmed
+  )
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*]/g, ' ')
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const modeTagRaw = (bracketMatch?.[2] ?? '').trim()
+
+  return {
+    raw,
+    baseName,
+    modeTagRaw,
+    modeTag: classifySpeakerModeTag(modeTagRaw),
+  }
 }
 
 export function normalizeCharacterName(value: string): string {
@@ -84,14 +143,20 @@ function isKnownGender(value: unknown): boolean {
 export function resolveCharacterByName<T extends { name: string; gender?: CharacterGender | string }>(
   characterName: string,
   characters: T[],
-  options?: { preferKnownGender?: boolean },
+  options?: { preferKnownGender?: boolean; aliasMap?: Map<string, string> },
 ): T | null {
-  const trimmed = characterName.trim()
+  const parsed = parseCharacterSpeaker(characterName)
+  const trimmed = parsed.baseName.trim()
   if (!trimmed) return null
 
   const normalized = normalizeCharacterName(trimmed)
   const alias = normalizeCharacterAlias(trimmed)
   const aliasTokens = tokenizeAlias(trimmed)
+  const mappedCanonical = options?.aliasMap?.get(alias) ?? options?.aliasMap?.get(normalized)
+  if (mappedCanonical) {
+    const mappedMatch = characters.find(item => normalizeCharacterName(item.name) === normalizeCharacterName(mappedCanonical))
+    if (mappedMatch) return mappedMatch
+  }
   const reversedAlias = aliasTokens.length > 1 ? [...aliasTokens].reverse().join(' ') : ''
 
   type Candidate = { item: T; score: number }
