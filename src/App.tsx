@@ -2174,10 +2174,10 @@ function MemoryModal({ open, currentProjectId, store, onClose, onChange }: Memor
                 <button style={BASE_BTN} onClick={() => { void importGlossaryFile() }} disabled={!selectedGlossaryFile || selectedProjectId === 'all'}>Importuj glosariusz</button>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 6 }}>
-                <input placeholder="Fraza zrodlowa" value={glossaryDraft.source} onChange={e => setGlossaryDraft(prev => ({ ...prev, source: e.currentTarget.value }))} style={{ ...BASE_SEL, height: 26 }} />
-                <input placeholder="Preferowane tlumaczenie" value={glossaryDraft.preferred} onChange={e => setGlossaryDraft(prev => ({ ...prev, preferred: e.currentTarget.value }))} style={{ ...BASE_SEL, height: 26 }} />
-                <input placeholder="Alternatywy (|)" value={glossaryDraft.alternatives} onChange={e => setGlossaryDraft(prev => ({ ...prev, alternatives: e.currentTarget.value }))} style={{ ...BASE_SEL, height: 26 }} />
-                <input placeholder="Notatka" value={glossaryDraft.note} onChange={e => setGlossaryDraft(prev => ({ ...prev, note: e.currentTarget.value }))} style={{ ...BASE_SEL, height: 26 }} />
+                <input placeholder="Fraza zrodlowa" value={glossaryDraft.source} onChange={e => { const nextValue = e.currentTarget.value; setGlossaryDraft(prev => ({ ...prev, source: nextValue })) }} style={{ ...BASE_SEL, height: 26 }} />
+                <input placeholder="Preferowane tlumaczenie" value={glossaryDraft.preferred} onChange={e => { const nextValue = e.currentTarget.value; setGlossaryDraft(prev => ({ ...prev, preferred: nextValue })) }} style={{ ...BASE_SEL, height: 26 }} />
+                <input placeholder="Alternatywy (|)" value={glossaryDraft.alternatives} onChange={e => { const nextValue = e.currentTarget.value; setGlossaryDraft(prev => ({ ...prev, alternatives: nextValue })) }} style={{ ...BASE_SEL, height: 26 }} />
+                <input placeholder="Notatka" value={glossaryDraft.note} onChange={e => { const nextValue = e.currentTarget.value; setGlossaryDraft(prev => ({ ...prev, note: nextValue })) }} style={{ ...BASE_SEL, height: 26 }} />
                 <button style={BASE_BTN} onClick={addGlossaryEntry} disabled={selectedProjectId === 'all'}>Dodaj</button>
               </div>
               <div style={{ border: `1px solid ${C.border}`, background: '#21232d' }}>
@@ -3548,87 +3548,114 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                     </select>
                     <input
                       value={character.profile.speakingTraits}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, speakingTraits: e.currentTarget.value } } : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, speakingTraits: nextValue } } : item),
+                        }))
+                      }}
                       placeholder="Cechy mówienia (opcjonalnie)"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                     />
                     <input
                       value={character.profile.characterNote}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, characterNote: e.currentTarget.value } } : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, characterNote: nextValue } } : item),
+                        }))
+                      }}
                       placeholder="Opis charakteru"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                     />
                     <textarea
                       value={character.profile.characterUserNotes}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id
-                          ? { ...item, profile: mergeCharacterNotesAnalysisIntoProfile(item.profile, e.currentTarget.value) }
-                          : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id
+                            ? { ...item, profile: mergeCharacterNotesAnalysisIntoProfile(item.profile, nextValue) }
+                            : item),
+                        }))
+                      }}
                       placeholder="Notatki użytkownika (Krok 2)"
                       rows={3}
                       style={{ marginTop: 4, width: '100%', background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '4px 6px', resize: 'vertical' }}
                     />
                     <input
                       value={character.profile.personalitySummary}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, personalitySummary: e.currentTarget.value } } : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, personalitySummary: nextValue } } : item),
+                        }))
+                      }}
                       placeholder="Podsumowanie osobowosci"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                     />
                     <input
                       value={character.profile.mannerOfAddress}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, mannerOfAddress: e.currentTarget.value } } : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, mannerOfAddress: nextValue } } : item),
+                        }))
+                      }}
                       placeholder="Sposob zwracania sie"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                     />
                     <div style={{ marginTop: 4, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
                       <input
                         value={character.profile.politenessLevel}
-                        onChange={e => setDraft(prev => ({
-                          ...prev,
-                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, politenessLevel: e.currentTarget.value } } : item),
-                        }))}
+                        onChange={e => {
+                          const nextValue = e.currentTarget.value
+                          setDraft(prev => ({
+                            ...prev,
+                            characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, politenessLevel: nextValue } } : item),
+                          }))
+                        }}
                         placeholder="Formalnosc"
                         style={{ width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                       />
                       <input
                         value={character.profile.temperament}
-                        onChange={e => setDraft(prev => ({
-                          ...prev,
-                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, temperament: e.currentTarget.value } } : item),
-                        }))}
+                        onChange={e => {
+                          const nextValue = e.currentTarget.value
+                          setDraft(prev => ({
+                            ...prev,
+                            characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, temperament: nextValue } } : item),
+                          }))
+                        }}
                         placeholder="Temperament"
                         style={{ width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                       />
                     </div>
                     <input
                       value={character.profile.vocabularyType}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, vocabularyType: e.currentTarget.value } } : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, vocabularyType: nextValue } } : item),
+                        }))
+                      }}
                       placeholder="Typ slownictwa"
                       style={{ marginTop: 4, width: '100%', height: 22, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '0 4px' }}
                     />
                     <textarea
                       value={character.profile.anilistDescription}
-                      onChange={e => setDraft(prev => ({
-                        ...prev,
-                        characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, anilistDescription: e.currentTarget.value } } : item),
-                      }))}
+                      onChange={e => {
+                        const nextValue = e.currentTarget.value
+                        setDraft(prev => ({
+                          ...prev,
+                          characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, anilistDescription: nextValue } } : item),
+                        }))
+                      }}
                       placeholder="Opis AniList"
                       rows={2}
                       style={{ marginTop: 4, width: '100%', background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '4px 6px', resize: 'vertical' }}

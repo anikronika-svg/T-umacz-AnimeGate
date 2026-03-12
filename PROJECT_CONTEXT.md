@@ -1165,3 +1165,23 @@
   - nowe pola profilu sa trwale zapisywane i odtwarzane po ponownym otwarciu projektu,
   - edycja z lewego panelu dziala bez naruszania obecnego flow przypisywania postaci,
   - krok 3 dostaje jawniejszy kontekst postaci do wsparcia tlumaczenia.
+
+## 52) Hotfix renderer crash: `Cannot read properties of null (reading 'value')` (v1.0.39)
+- Objaw:
+  - renderer przechodzil na ekran krytyczny z:
+    - `window.unhandledrejection`
+    - `TypeError: Cannot read properties of null (reading 'value')`.
+- Root cause:
+  - w kilku handlerach `onChange` odczyt `event.currentTarget.value` byl wykonywany wewnatrz funkcyjnych updaterow `setState(prev => ...)`.
+  - przy asynchronicznym harmonogramie React, `currentTarget` mogl byc juz wyzerowany (`null`) zanim updater odczytal `.value`.
+- Naprawa:
+  - w krytycznych miejscach przechwytywany jest najpierw lokalny `const nextValue = event.currentTarget.value`,
+  - dopiero `nextValue` trafia do `setGlossaryDraft` / `setDraft`.
+  - poprawiono:
+    - `src/components/CharacterProfileEditorModal.tsx` (wszystkie pola edytora),
+    - `src/App.tsx` (edycja glosariusza + edycja profilu postaci w Kroku 3).
+- Weryfikacja:
+  - `npm run test -- --run` OK,
+  - `npm run build:renderer` OK,
+  - `npm run build:electron` OK,
+  - `npm run build:win` OK.

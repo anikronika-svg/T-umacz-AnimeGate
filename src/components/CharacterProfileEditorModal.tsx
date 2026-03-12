@@ -90,7 +90,10 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Nazwa postaci</span>
               <input
                 value={draft.name}
-                onChange={event => setDraft(prev => (prev ? { ...prev, name: event.currentTarget.value } : prev))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value
+                  setDraft(prev => (prev ? { ...prev, name: nextValue } : prev))
+                }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 8px' }}
               />
             </label>
@@ -98,7 +101,10 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Nazwa oryginalna</span>
               <input
                 value={draft.originalName ?? ''}
-                onChange={event => setDraft(prev => (prev ? { ...prev, originalName: event.currentTarget.value } : prev))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value
+                  setDraft(prev => (prev ? { ...prev, originalName: nextValue } : prev))
+                }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 8px' }}
               />
             </label>
@@ -109,7 +115,10 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Płeć</span>
               <select
                 value={draft.gender}
-                onChange={event => setDraft(prev => (prev ? { ...prev, gender: event.currentTarget.value as CharacterGender } : prev))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value as CharacterGender
+                  setDraft(prev => (prev ? { ...prev, gender: nextValue } : prev))
+                }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 6px' }}
               >
                 {GENDER_OPTIONS.map(value => (
@@ -121,20 +130,23 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Rodzaj tłumaczenia</span>
               <select
                 value={draft.profile.translationGender}
-                onChange={event => setDraft(prev => (
-                  prev
-                    ? {
-                      ...prev,
-                      profile: {
-                        ...prev.profile,
-                        translationGender: event.currentTarget.value as CharacterTranslationGender,
-                        isUserEdited: true,
-                        updatedAt: new Date().toISOString(),
-                        manualOverrides: { ...prev.profile.manualOverrides, translationGender: true },
-                      },
-                    }
-                    : prev
-                ))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value as CharacterTranslationGender
+                  setDraft(prev => (
+                    prev
+                      ? {
+                        ...prev,
+                        profile: {
+                          ...prev.profile,
+                          translationGender: nextValue,
+                          isUserEdited: true,
+                          updatedAt: new Date().toISOString(),
+                          manualOverrides: { ...prev.profile.manualOverrides, translationGender: true },
+                        },
+                      }
+                      : prev
+                  ))
+                }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 6px' }}
               >
                 {TRANSLATION_GENDER_OPTIONS.map(value => (
@@ -146,20 +158,23 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Styl mówienia</span>
               <select
                 value={draft.profile.speakingStyle}
-                onChange={event => setDraft(prev => (
-                  prev
-                    ? {
-                      ...prev,
-                      profile: {
-                        ...prev.profile,
-                        speakingStyle: event.currentTarget.value as CharacterSpeakingStyle,
-                        isUserEdited: true,
-                        updatedAt: new Date().toISOString(),
-                        manualOverrides: { ...prev.profile.manualOverrides, speakingStyle: true },
-                      },
-                    }
-                    : prev
-                ))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value as CharacterSpeakingStyle
+                  setDraft(prev => (
+                    prev
+                      ? {
+                        ...prev,
+                        profile: {
+                          ...prev.profile,
+                          speakingStyle: nextValue,
+                          isUserEdited: true,
+                          updatedAt: new Date().toISOString(),
+                          manualOverrides: { ...prev.profile.manualOverrides, speakingStyle: true },
+                        },
+                      }
+                      : prev
+                  ))
+                }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 6px' }}
               >
                 {SPEAKING_STYLE_OPTIONS.map(value => (
@@ -174,23 +189,26 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Cechy charakteru (tagi, po przecinku)</span>
               <input
                 value={traitsText}
-                onChange={event => setDraft(prev => (
-                  prev
-                    ? {
-                      ...prev,
-                      profile: {
-                        ...prev.profile,
-                        personalityTraits: event.currentTarget.value
-                          .split(',')
-                          .map(item => item.trim())
-                          .filter(Boolean),
-                        isUserEdited: true,
-                        updatedAt: new Date().toISOString(),
-                        manualOverrides: { ...prev.profile.manualOverrides, personalityTraits: true },
-                      },
-                    }
-                    : prev
-                ))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value
+                  setDraft(prev => (
+                    prev
+                      ? {
+                        ...prev,
+                        profile: {
+                          ...prev.profile,
+                          personalityTraits: nextValue
+                            .split(',')
+                            .map(item => item.trim())
+                            .filter(Boolean),
+                          isUserEdited: true,
+                          updatedAt: new Date().toISOString(),
+                          manualOverrides: { ...prev.profile.manualOverrides, personalityTraits: true },
+                        },
+                      }
+                      : prev
+                  ))
+                }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 8px' }}
               />
             </label>
@@ -198,20 +216,23 @@ export function CharacterProfileEditorModal({
               <span style={{ fontSize: 12, color: PANEL.textDim }}>Ton wypowiedzi</span>
               <input
                 value={draft.profile.toneProfile}
-                onChange={event => setDraft(prev => (
-                  prev
-                    ? {
-                      ...prev,
-                      profile: {
-                        ...prev.profile,
-                        toneProfile: event.currentTarget.value,
-                        isUserEdited: true,
-                        updatedAt: new Date().toISOString(),
-                        manualOverrides: { ...prev.profile.manualOverrides, toneProfile: true },
-                      },
-                    }
-                    : prev
-                ))}
+                onChange={event => {
+                  const nextValue = event.currentTarget.value
+                  setDraft(prev => (
+                    prev
+                      ? {
+                        ...prev,
+                        profile: {
+                          ...prev.profile,
+                          toneProfile: nextValue,
+                          isUserEdited: true,
+                          updatedAt: new Date().toISOString(),
+                          manualOverrides: { ...prev.profile.manualOverrides, toneProfile: true },
+                        },
+                      }
+                      : prev
+                  ))
+                }}
                 placeholder="np. spokojna, elegancka, rzeczowa"
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 8px' }}
               />
@@ -222,20 +243,23 @@ export function CharacterProfileEditorModal({
             <span style={{ fontSize: 12, color: PANEL.textDim }}>Notatki tłumaczeniowe</span>
             <textarea
               value={draft.profile.translationNotes}
-              onChange={event => setDraft(prev => (
-                prev
-                  ? {
-                    ...prev,
-                    profile: {
-                      ...prev.profile,
-                      translationNotes: event.currentTarget.value,
-                      isUserEdited: true,
-                      updatedAt: new Date().toISOString(),
-                      manualOverrides: { ...prev.profile.manualOverrides, translationNotes: true },
-                    },
-                  }
-                  : prev
-              ))}
+              onChange={event => {
+                const nextValue = event.currentTarget.value
+                setDraft(prev => (
+                  prev
+                    ? {
+                      ...prev,
+                      profile: {
+                        ...prev.profile,
+                        translationNotes: nextValue,
+                        isUserEdited: true,
+                        updatedAt: new Date().toISOString(),
+                        manualOverrides: { ...prev.profile.manualOverrides, translationNotes: true },
+                      },
+                    }
+                    : prev
+                ))
+              }}
               rows={3}
               style={{ background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '8px 10px', resize: 'vertical' }}
             />
@@ -245,20 +269,23 @@ export function CharacterProfileEditorModal({
             <span style={{ fontSize: 12, color: PANEL.textDim }}>Relacje / kontekst</span>
             <textarea
               value={draft.profile.relationshipNotes}
-              onChange={event => setDraft(prev => (
-                prev
-                  ? {
-                    ...prev,
-                    profile: {
-                      ...prev.profile,
-                      relationshipNotes: event.currentTarget.value,
-                      isUserEdited: true,
-                      updatedAt: new Date().toISOString(),
-                      manualOverrides: { ...prev.profile.manualOverrides, relationshipNotes: true },
-                    },
-                  }
-                  : prev
-              ))}
+              onChange={event => {
+                const nextValue = event.currentTarget.value
+                setDraft(prev => (
+                  prev
+                    ? {
+                      ...prev,
+                      profile: {
+                        ...prev.profile,
+                        relationshipNotes: nextValue,
+                        isUserEdited: true,
+                        updatedAt: new Date().toISOString(),
+                        manualOverrides: { ...prev.profile.manualOverrides, relationshipNotes: true },
+                      },
+                    }
+                    : prev
+                ))
+              }}
               rows={3}
               style={{ background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '8px 10px', resize: 'vertical' }}
             />
@@ -268,20 +295,23 @@ export function CharacterProfileEditorModal({
             <span style={{ fontSize: 12, color: PANEL.textDim }}>Własna wskazówka do tłumaczenia</span>
             <textarea
               value={draft.profile.customPromptHint}
-              onChange={event => setDraft(prev => (
-                prev
-                  ? {
-                    ...prev,
-                    profile: {
-                      ...prev.profile,
-                      customPromptHint: event.currentTarget.value,
-                      isUserEdited: true,
-                      updatedAt: new Date().toISOString(),
-                      manualOverrides: { ...prev.profile.manualOverrides, customPromptHint: true },
-                    },
-                  }
-                  : prev
-              ))}
+              onChange={event => {
+                const nextValue = event.currentTarget.value
+                setDraft(prev => (
+                  prev
+                    ? {
+                      ...prev,
+                      profile: {
+                        ...prev.profile,
+                        customPromptHint: nextValue,
+                        isUserEdited: true,
+                        updatedAt: new Date().toISOString(),
+                        manualOverrides: { ...prev.profile.manualOverrides, customPromptHint: true },
+                      },
+                    }
+                    : prev
+                ))
+              }}
               rows={2}
               style={{ background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '8px 10px', resize: 'vertical' }}
             />
