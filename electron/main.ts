@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, session } from 'electron'
 import { promises as fs } from 'fs'
+import net from 'net'
 import path from 'path'
 import { createHash } from 'crypto'
 import { spawn } from 'child_process'
@@ -105,6 +106,146 @@ interface CreateProjectArgs {
 const STARTUP_LOG_FILE = 'startup.log'
 
 type StartupLogLevel = 'INFO' | 'WARN' | 'ERROR'
+
+const APPROVED_ROOTS = new Set<string>()
+const API_MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+
+const API_ALLOWED_HOSTS = new Set([
+  'graphql.anilist.co',
+  'api.openai.com',
+  'api.anthropic.com',
+  'api.mistral.ai',
+  'api.groq.com',
+  'api.together.ai',
+  'api.openrouter.ai',
+  'openrouter.ai',
+  'api.cohere.ai',
+  'api.deepl.com',
+  'api-free.deepl.com',
+  'api.mymemory.translated.net',
+  'libretranslate.com',
+  'translate.argosopentech.com',
+  'generativelanguage.googleapis.com',
+  'translation.googleapis.com',
+  'translate.googleapis.com',
+  'api.cognitive.microsofttranslator.com',
+  'translate.yandex.net',
+  'translate.api.cloud.yandex.net',
+  'openapi.naver.com',
+  'papago.naver.com',
+])
+
+const API_ALLOWED_SUFFIXES = [
+  '.cognitiveservices.azure.com',
+  '.openai.azure.com',
+]
+
+const API_ALLOWED_METHODS = new Set(['GET', 'POST'])
+
+function normalizeFsPath(value: string): string {
+  const resolved = path.resolve(value)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+function approveRootPath(dirPath: string): void {
+  if (!dirPath) return
+  APPROVED_ROOTS.add(normalizeFsPath(dirPath))
+}
+
+function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const root = normalizeFsPath(rootPath)
+  const candidate = normalizeFsPath(candidatePath)
+  return candidate === root || candidate.startsWith(root + path.sep)
+}
+
+function isApprovedPath(candidatePath: string): boolean {
+  const normalized = normalizeFsPath(candidatePath)
+  for (const root of APPROVED_ROOTS) {
+    if (normalized === root || normalized.startsWith(root + path.sep)) return true
+  }
+  return false
+}
+
+function isPrivateIpv4(host: string): boolean {
+  const parts = host.split('.').map(part => Number(part))
+  if (parts.length !== 4 || parts.some(n => Number.isNaN(n) || n < 0 || n > 255)) return false
+  const [a, b] = parts
+  if (a === 10) return true
+  if (a === 127) return true
+  if (a === 169 && b === 254) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return false
+}
+
+function isPrivateIpv6(host: string): boolean {
+  const value = host.toLowerCase()
+  if (value === '::1') return true
+  if (value.startsWith('fc') || value.startsWith('fd')) return true
+  if (value.startsWith('fe80')) return true
+  return false
+}
+
+function isBlockedHostname(hostname: string): boolean {
+  if (!hostname) return true
+  if (hostname === 'localhost') return true
+  const ipType = net.isIP(hostname)
+  if (ipType === 4) return isPrivateIpv4(hostname)
+  if (ipType === 6) return isPrivateIpv6(hostname)
+  return false
+}
+
+function isAllowedApiHost(hostname: string): boolean {
+  if (API_ALLOWED_HOSTS.has(hostname)) return true
+  return API_ALLOWED_SUFFIXES.some(suffix => hostname.endsWith(suffix))
+}
+
+function getCspHeaderValue(): string {
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self' data:",
+    "connect-src https:",
+    "base-uri 'self'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ')
+}
+
+async function readResponseTextWithLimit(response: Response, limitBytes: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) {
+    const text = await response.text()
+    if (text.length > limitBytes) throw new Error('response-too-large')
+    return text
+  }
+
+  const decoder = new TextDecoder()
+  let received = 0
+  let output = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value) {
+      received += value.byteLength
+      if (received > limitBytes) {
+        try {
+          await reader.cancel()
+        } catch {
+          // ignore
+        }
+        throw new Error('response-too-large')
+      }
+      output += decoder.decode(value, { stream: true })
+    }
+  }
+
+  output += decoder.decode()
+  return output
+}
 
 function getOpenStatePath(): string {
   return path.join(app.getPath('userData'), OPEN_STATE_FILE)
@@ -521,6 +662,12 @@ function createWindow(): void {
   })
   mainWindow = win
 
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', event => {
+    if (process.env.VITE_DEV_SERVER_URL) return
+    event.preventDefault()
+  })
+
   win.on('closed', () => {
     mainWindow = null
     if (previewWindow && !previewWindow.isDestroyed()) {
@@ -621,6 +768,12 @@ async function createDetachedPreviewWindow(): Promise<BrowserWindow> {
     previewWindow = null
   })
 
+  preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  preview.webContents.on('will-navigate', event => {
+    if (process.env.VITE_DEV_SERVER_URL) return
+    event.preventDefault()
+  })
+
   const persistBounds = (): void => {
     if (!previewWindow || previewWindow.isDestroyed()) return
     const bounds = previewWindow.getBounds()
@@ -660,6 +813,7 @@ function setupFileIpc(): void {
     const filePath = result.filePaths[0]
     try {
       const content = await fs.readFile(filePath, 'utf-8')
+      approveRootPath(path.dirname(filePath))
       await writeOpenState({ lastDir: path.dirname(filePath) })
       return { canceled: false, filePath, content }
     } catch (error) {
@@ -669,6 +823,12 @@ function setupFileIpc(): void {
   })
 
   ipcMain.handle('file:readSubtitle', async (_event, filePath: string) => {
+    if (!filePath || !/\.(ass|ssa)$/i.test(filePath)) {
+      throw new Error('Nieprawidłowy format pliku napisów.')
+    }
+    if (!isApprovedPath(filePath)) {
+      throw new Error('Brak dostępu do pliku spoza zatwierdzonego katalogu.')
+    }
     const content = await fs.readFile(filePath, 'utf-8')
     await writeOpenState({ lastDir: path.dirname(filePath) })
     return { filePath, content }
@@ -679,6 +839,12 @@ function setupFileIpc(): void {
     const content = args?.content ?? ''
     if (!sourcePath) {
       throw new Error('Brak ścieżki pliku źródłowego.')
+    }
+    if (!/\.(ass|ssa)$/i.test(sourcePath)) {
+      throw new Error('Nieprawidłowy format pliku napisów.')
+    }
+    if (!isApprovedPath(sourcePath)) {
+      throw new Error('Brak dostępu do zapisu poza zatwierdzonym katalogiem.')
     }
 
     const sourceDir = path.dirname(sourcePath)
@@ -708,11 +874,37 @@ function setupFileIpc(): void {
     }
 
     const filePath = result.filePaths[0]
+    approveRootPath(path.dirname(filePath))
     await writeOpenState({ lastDir: path.dirname(filePath) })
     return { canceled: false, filePath }
   })
 
-  ipcMain.handle('video:getWaveform', async (_event, args: VideoWaveformArgs) => getWaveformForVideo(args))
+  ipcMain.handle('video:getWaveform', async (_event, args: VideoWaveformArgs) => {
+    const filePath = args?.filePath?.trim()
+    if (!filePath) {
+      return {
+        ok: false,
+        filePath: '',
+        sampleRate: 0,
+        peaks: [],
+        duration: 0,
+        fromCache: false,
+        error: 'Brak sciezki pliku wideo.',
+      }
+    }
+    if (!isApprovedPath(filePath)) {
+      return {
+        ok: false,
+        filePath,
+        sampleRate: 0,
+        peaks: [],
+        duration: 0,
+        fromCache: false,
+        error: 'Brak dostepu do pliku wideo spoza zatwierdzonego katalogu.',
+      }
+    }
+    return getWaveformForVideo(args)
+  })
 
   ipcMain.handle('api:getConfig', async () => readApiConfig())
 
@@ -733,6 +925,50 @@ function setupFileIpc(): void {
       }
     }
 
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(url)
+    } catch {
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'INVALID_URL',
+        body: '',
+        error: { code: 'invalid-url', message: 'Nieprawidłowy URL.' },
+      }
+    }
+
+    if (parsedUrl.protocol !== 'https:') {
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'INVALID_PROTOCOL',
+        body: '',
+        error: { code: 'invalid-protocol', message: 'Dozwolony jest tylko protokół HTTPS.' },
+      }
+    }
+
+    if (isBlockedHostname(parsedUrl.hostname) || !isAllowedApiHost(parsedUrl.hostname)) {
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'HOST_BLOCKED',
+        body: '',
+        error: { code: 'host-blocked', message: 'Host nie znajduje się na liście dozwolonych.' },
+      }
+    }
+
+    const method = (args.method ?? 'GET').toUpperCase()
+    if (!API_ALLOWED_METHODS.has(method)) {
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'METHOD_NOT_ALLOWED',
+        body: '',
+        error: { code: 'method-not-allowed', message: 'Niedozwolona metoda HTTP.' },
+      }
+    }
+
     const timeoutMs = Math.max(1000, Math.min(45000, Number(args.timeoutMs ?? 15000)))
     const timeoutController = new AbortController()
     let timeoutReached = false
@@ -742,14 +978,15 @@ function setupFileIpc(): void {
     }, timeoutMs)
 
     try {
-      const response = await fetch(url, {
-        method: args.method ?? 'GET',
+      const response = await fetch(parsedUrl.toString(), {
+        method,
         headers: args.headers ?? {},
         body: args.body,
         signal: timeoutController.signal,
+        redirect: 'error',
       })
 
-      const body = await response.text()
+      const body = await readResponseTextWithLimit(response, API_MAX_RESPONSE_BYTES)
       const headers = Object.fromEntries(response.headers.entries())
       return {
         ok: response.ok,
@@ -773,6 +1010,18 @@ function setupFileIpc(): void {
       }
 
       const fetchErr = error as Error & { cause?: { code?: string; message?: string } }
+      if (fetchErr.message === 'response-too-large') {
+        return {
+          ok: false,
+          status: 0,
+          statusText: 'RESPONSE_TOO_LARGE',
+          body: '',
+          error: {
+            code: 'response-too-large',
+            message: `Odpowiedź przekracza limit ${API_MAX_RESPONSE_BYTES} bajtów.`,
+          },
+        }
+      }
       const causeCode = fetchErr.cause?.code
       const networkCode = causeCode ?? 'network'
       const details = fetchErr.cause?.message ?? fetchErr.message
@@ -802,6 +1051,7 @@ function setupFileIpc(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return { canceled: true }
     }
+    approveRootPath(result.filePaths[0])
     return { canceled: false, directoryPath: result.filePaths[0] }
   })
 
@@ -818,17 +1068,23 @@ function setupFileIpc(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return { canceled: true }
     }
+    approveRootPath(path.dirname(result.filePaths[0]))
     return { canceled: false, filePath: result.filePaths[0] }
   })
 
   ipcMain.handle('project:create', async (_event, args: CreateProjectArgs) => {
+    if (!isApprovedPath(args.parentDir)) {
+      throw new Error('Brak dostępu do folderu projektu (niezatwierdzony katalog).')
+    }
     const created = await createProjectOnDisk(args)
+    approveRootPath(created.projectDir)
     return { ok: true, ...created }
   })
 
   ipcMain.handle('project:open', async (_event, projectPath: string) => {
     startupLog('INFO', 'projectPath', { projectPath })
     const opened = await openProjectFromDisk(projectPath)
+    approveRootPath(opened.projectDir)
     startupLog('INFO', 'projectFileFound', { configPath: opened.configPath })
     startupLog('INFO', 'projectLoaded', {
       projectId: opened.config.projectId,
@@ -839,6 +1095,9 @@ function setupFileIpc(): void {
   })
 
   ipcMain.handle('project:saveConfig', async (_event, args: { projectDir: string; config: DiskProjectConfigV1 }) => {
+    if (!isApprovedPath(args.projectDir)) {
+      throw new Error('Brak dostępu do zapisu projektu (niezatwierdzony katalog).')
+    }
     const saved = await saveProjectConfigOnDisk(args.projectDir, args.config)
     return { ok: true, ...saved }
   })
@@ -905,6 +1164,15 @@ app.whenReady().then(() => {
     isPackaged: app.isPackaged,
     userData: app.getPath('userData'),
   })
+
+  if (app.isPackaged) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      const headers = details.responseHeaders ?? {}
+      headers['Content-Security-Policy'] = [getCspHeaderValue()]
+      callback({ responseHeaders: headers })
+    })
+  }
+
   setupFileIpc()
   setupUpdaterIpc()
   createWindow()
