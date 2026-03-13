@@ -166,6 +166,12 @@ interface ActiveDiskProject {
   configPath: string
 }
 
+interface AppVersionInfo {
+  version: string
+  isPackaged: boolean
+  execPath: string
+}
+
 function sanitizeProjectId(value: string): string {
   return value
     .trim()
@@ -1467,12 +1473,14 @@ function UpdateStatusBar({
   onCheck,
   onDownload,
   onInstall,
+  appVersion,
 }: {
   status: UpdaterStatus
   isSupported: boolean
   onCheck: () => void
   onDownload: () => void
   onInstall: () => void
+  appVersion: string
 }): React.ReactElement {
   const canCheck = isSupported && status.phase !== 'checking-for-update' && status.phase !== 'download-progress' && status.phase !== 'installing'
   const canDownload = isSupported && status.phase === 'update-available'
@@ -1489,6 +1497,7 @@ function UpdateStatusBar({
       <button style={{ ...BASE_BTN, opacity: canCheck ? 1 : 0.5 }} disabled={!canCheck} onClick={onCheck}>Sprawdz</button>
       <button style={{ ...BASE_BTN, opacity: canDownload ? 1 : 0.5 }} disabled={!canDownload} onClick={onDownload}>Pobierz</button>
       <button style={{ ...BASE_BTN, opacity: canInstall ? 1 : 0.5 }} disabled={!canInstall} onClick={onInstall}>Instaluj</button>
+      <span style={{ marginLeft: 'auto', color: C.textDim }}>Wersja: <span style={{ color: C.accentY }}>{appVersion || '-'}</span></span>
     </div>
   )
 }
@@ -3889,6 +3898,7 @@ export default function App(): React.ReactElement {
   const [translationCancelled, setTranslationCancelled] = useState(false)
   const [translatingLineId, setTranslatingLineId] = useState<number | null>(null)
   const [loadedFileName, setLoadedFileName] = useState('Brak pliku')
+  const [appVersionInfo, setAppVersionInfo] = useState<AppVersionInfo | null>(null)
   const [loadedFilePath, setLoadedFilePath] = useState<string | null>(null)
   const [loadedSubtitleFile, setLoadedSubtitleFile] = useState<ParsedSubtitleFile | null>(null)
   const [videoPath, setVideoPath] = useState<string | null>(initialVideoConfig.videoPath)
@@ -3971,6 +3981,18 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     saveSeriesProjectsCatalog(seriesProjects)
   }, [seriesProjects])
+
+  useEffect(() => {
+    if (!window.electronAPI?.getAppVersion) return
+    void window.electronAPI.getAppVersion()
+      .then(info => {
+        setAppVersionInfo(info)
+        console.log('[app-version]', info)
+      })
+      .catch(error => {
+        console.warn('[app-version-error]', error)
+      })
+  }, [])
 
   useEffect(() => {
     if (!activeDiskProject) return
@@ -7143,6 +7165,7 @@ export default function App(): React.ReactElement {
             onCheck={() => { void checkForUpdates() }}
             onDownload={() => { void downloadUpdate() }}
             onInstall={() => { void installUpdate() }}
+            appVersion={appVersionInfo?.version ?? ''}
           />
           <LinesView
             rows={rowsData}

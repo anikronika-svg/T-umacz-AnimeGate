@@ -1195,6 +1195,14 @@ function setupUpdaterIpc(): void {
   ipcMain.handle('updater:installUpdate', async () => installUpdate())
 }
 
+function setupAppIpc(): void {
+  ipcMain.handle('app:getVersion', async () => ({
+    version: app.getVersion(),
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+  }))
+}
+
 app.whenReady().then(() => {
   startupLog('INFO', 'app:ready', {
     version: app.getVersion(),
@@ -1212,6 +1220,7 @@ app.whenReady().then(() => {
 
   setupFileIpc()
   setupUpdaterIpc()
+  setupAppIpc()
   createWindow()
   void initializeAutoUpdate()
 

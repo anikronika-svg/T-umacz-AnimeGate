@@ -96,6 +96,11 @@ declare global {
         total?: number
         error?: string
       }>
+      getAppVersion: () => Promise<{
+        version: string
+        isPackaged: boolean
+        execPath: string
+      }>
       onUpdaterStatus: (callback: (status: {
         phase: 'idle' | 'checking-for-update' | 'update-available' | 'update-not-available' | 'download-started' | 'download-progress' | 'update-downloaded' | 'installing' | 'error'
         message: string

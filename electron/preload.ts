@@ -211,6 +211,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('updater:downloadUpdate'),
   installUpdate: (): Promise<UpdaterStatusPayload> =>
     ipcRenderer.invoke('updater:installUpdate'),
+  getAppVersion: (): Promise<{ version: string; isPackaged: boolean; execPath: string }> =>
+    ipcRenderer.invoke('app:getVersion'),
   onUpdaterStatus: (callback: (status: UpdaterStatusPayload) => void): (() => void) => {
     const listener = (_event: unknown, status: UpdaterStatusPayload): void => {
       callback(status)
