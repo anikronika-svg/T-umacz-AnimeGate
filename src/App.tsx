@@ -3991,7 +3991,12 @@ export default function App(): React.ReactElement {
       })
       .catch(error => {
         console.warn('[app-version-error]', error)
+        setAppVersionInfo({ version: 'unknown', isPackaged: false, execPath: '' })
       })
+  }, [])
+
+  useEffect(() => {
+    window.electronAPI?.signalRendererReady?.()
   }, [])
 
   useEffect(() => {
@@ -7165,7 +7170,7 @@ export default function App(): React.ReactElement {
             onCheck={() => { void checkForUpdates() }}
             onDownload={() => { void downloadUpdate() }}
             onInstall={() => { void installUpdate() }}
-            appVersion={appVersionInfo?.version ?? ''}
+            appVersion={appVersionInfo?.version ?? 'unknown'}
           />
           <LinesView
             rows={rowsData}
@@ -7288,7 +7293,3 @@ export default function App(): React.ReactElement {
     </div>
   )
 }
-    if (leakGuard.requiresManualCheck) {
-      requiresManualCheck = true
-      appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
-    }

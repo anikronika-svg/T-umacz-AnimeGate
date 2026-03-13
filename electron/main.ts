@@ -296,6 +296,8 @@ let detachedPreviewState: DetachedPreviewState = {
   sourceText: '',
   targetText: '',
 }
+let mainRendererReady = false
+let mainRendererReadyTimer: NodeJS.Timeout | null = null
 
 async function readPreviewWindowBounds(): Promise<PreviewWindowBounds | null> {
   try {
@@ -394,6 +396,15 @@ function renderStartupErrorPage(win: BrowserWindow, title: string, details: stri
   </body>
 </html>`
   void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function buildWaveformCacheKey(filePath: string, size: number, mtimeMs: number): string {
@@ -646,13 +657,18 @@ function loadRendererWindow(win: BrowserWindow, hash?: string): Promise<void> {
     const url = hash
       ? `${process.env.VITE_DEV_SERVER_URL}#${hash}`
       : process.env.VITE_DEV_SERVER_URL
+    startupLog('INFO', 'renderer:load', { mode: 'dev', url })
     return win.loadURL(url)
   }
+  startupLog('INFO', 'renderer:load', { mode: 'file', path: rendererIndexPath, hash: hash ?? '' })
   return win.loadFile(rendererIndexPath, hash ? { hash } : undefined)
 }
 
-function createWindow(): void {
+async function createWindow(): Promise<void> {
   const preloadPath = path.join(__dirname, 'preload.js')
+  const rendererIndexPath = path.join(__dirname, '../dist/index.html')
+  const preloadExists = await fileExists(preloadPath)
+  const rendererExists = await fileExists(rendererIndexPath)
   startupLog('INFO', 'createWindow:start', {
     isPackaged: app.isPackaged,
     appPath: app.getAppPath(),
@@ -660,7 +676,9 @@ function createWindow(): void {
     resourcesPath: process.resourcesPath,
     dirname: __dirname,
     preloadPath,
-    rendererIndexPath: path.join(__dirname, '../dist/index.html'),
+    rendererIndexPath,
+    preloadExists,
+    rendererExists,
     hasDevServerUrl: Boolean(process.env.VITE_DEV_SERVER_URL),
   })
 
@@ -692,6 +710,29 @@ function createWindow(): void {
 
   win.webContents.on('did-finish-load', () => {
     startupLog('INFO', 'webContents:did-finish-load', {
+      url: win.webContents.getURL(),
+    })
+    if (win === mainWindow) {
+      if (mainRendererReadyTimer) clearTimeout(mainRendererReadyTimer)
+      mainRendererReadyTimer = setTimeout(() => {
+        if (!mainRendererReady) {
+          startupLog('ERROR', 'renderer:ready-timeout', { url: win.webContents.getURL() })
+          renderStartupErrorPage(
+            win,
+            'Nie mozna uruchomic UI aplikacji',
+            'Renderer nie potwierdzil poprawnego startu w wymaganym czasie.',
+          )
+        }
+      }, 5000)
+    }
+  })
+  win.webContents.on('did-start-loading', () => {
+    startupLog('INFO', 'webContents:did-start-loading', {
+      url: win.webContents.getURL(),
+    })
+  })
+  win.webContents.on('did-stop-loading', () => {
+    startupLog('INFO', 'webContents:did-stop-loading', {
       url: win.webContents.getURL(),
     })
   })
@@ -732,12 +773,26 @@ function createWindow(): void {
       toLogString(details),
     )
   })
+  win.webContents.on('unresponsive', () => {
+    startupLog('WARN', 'webContents:unresponsive', { url: win.webContents.getURL() })
+  })
+  win.webContents.on('responsive', () => {
+    startupLog('INFO', 'webContents:responsive', { url: win.webContents.getURL() })
+  })
 
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    if (level >= 2) {
-      startupLog('WARN', 'renderer:console-message', { level, message, line, sourceId })
-    }
+    const severity: StartupLogLevel = level >= 3 ? 'ERROR' : (level === 2 ? 'WARN' : 'INFO')
+    startupLog(severity, 'renderer:console-message', { level, message, line, sourceId })
   })
+
+  if (!preloadExists || !rendererExists) {
+    renderStartupErrorPage(
+      win,
+      'Nie mozna zaladowac UI aplikacji',
+      `Brak wymaganych plikow UI.\npreload: ${preloadPath} (exists=${preloadExists})\nindex.html: ${rendererIndexPath} (exists=${rendererExists})`,
+    )
+    return
+  }
 
   const loadPromise = loadRendererWindow(win)
 
@@ -1203,6 +1258,25 @@ function setupAppIpc(): void {
   }))
 }
 
+function setupPreloadDiagnostics(): void {
+  ipcMain.on('app:preload-ready', (event, payload) => {
+    startupLog('INFO', 'preload:ready', {
+      url: event.sender?.getURL?.() ?? '',
+      payload,
+    })
+  })
+  ipcMain.on('app:renderer-ready', event => {
+    if (event.sender === mainWindow?.webContents) {
+      mainRendererReady = true
+      if (mainRendererReadyTimer) {
+        clearTimeout(mainRendererReadyTimer)
+        mainRendererReadyTimer = null
+      }
+      startupLog('INFO', 'renderer:ready', { url: event.sender.getURL() })
+    }
+  })
+}
+
 app.whenReady().then(() => {
   startupLog('INFO', 'app:ready', {
     version: app.getVersion(),
@@ -1221,7 +1295,8 @@ app.whenReady().then(() => {
   setupFileIpc()
   setupUpdaterIpc()
   setupAppIpc()
-  createWindow()
+  setupPreloadDiagnostics()
+  void createWindow()
   void initializeAutoUpdate()
 
   app.on('activate', () => {

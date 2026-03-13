@@ -186,7 +186,7 @@ interface DetachedPreviewState {
   targetText: string
 }
 
-contextBridge.exposeInMainWorld('electronAPI', {
+const api = {
   openSubtitleFile: (args?: OpenSubtitleArgs): Promise<OpenSubtitleResult> =>
     ipcRenderer.invoke('file:openSubtitle', args),
   readSubtitleFile: (filePath: string): Promise<ReadSubtitleResult> =>
@@ -251,6 +251,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('preview:getState'),
   requestDetachedPreviewTogglePlayback: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('preview:togglePlayback'),
+  signalRendererReady: (): void => {
+    ipcRenderer.send('app:renderer-ready')
+  },
   onDetachedPreviewState: (callback: (state: DetachedPreviewState) => void): (() => void) => {
     const listener = (_event: unknown, state: DetachedPreviewState): void => {
       callback(state)
@@ -269,4 +272,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('preview:command', listener)
     }
   },
-})
+}
+
+contextBridge.exposeInMainWorld('electronAPI', api)
+ipcRenderer.send('app:preload-ready', { apiKeys: Object.keys(api) })

@@ -436,6 +436,7 @@ declare global {
         targetText: string
       }>
       requestDetachedPreviewTogglePlayback: () => Promise<{ ok: boolean }>
+      signalRendererReady: () => void
       onDetachedPreviewState: (callback: (state: {
         videoSrc: string | null
         currentTime: number
