@@ -79,6 +79,11 @@ import {
 } from './components/CharacterAssignmentGrid'
 import { CharacterProfileEditorModal } from './components/CharacterProfileEditorModal'
 import type { CharacterSpeechProfile } from './project/characterProfileModel'
+import {
+  applyAutoTranslationGender,
+  deriveTranslationGenderFromGender,
+  shouldAutoSyncTranslationGender,
+} from './project/characterTranslationGender'
 
 const C = {
   bg0: '#1e1e2e',
@@ -2679,6 +2684,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         byKey.set(key, item)
         return
       }
+      const effectiveGender = existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender
       const mergedProfile = {
         ...existing.profile,
         characterTypeId: existing.profile.characterTypeId || item.profile.characterTypeId || '',
@@ -2716,6 +2722,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
           ...(existing.profile.manualOverrides ?? {}),
         },
       }
+      const syncedProfile = applyAutoTranslationGender(mergedProfile, effectiveGender)
       byKey.set(key, {
         ...existing,
         name: existing.name || item.name,
@@ -2726,10 +2733,10 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         imageUrl: existing.imageUrl || item.imageUrl || null,
         avatarPath: existing.avatarPath || item.avatarPath || null,
         avatarUrl: existing.avatarUrl || item.avatarUrl || null,
-        gender: existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender,
+        gender: effectiveGender,
         avatarColor: existing.avatarColor || item.avatarColor,
         style: existing.style ?? item.style ?? null,
-        profile: mergedProfile,
+        profile: syncedProfile,
       })
     })
     return [...byKey.values()]
@@ -2795,7 +2802,11 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       ...prev,
       characters: prev.characters.map(character => (
         normalizeCharacterName(character.name) === key
-          ? { ...character, gender }
+          ? {
+            ...character,
+            gender,
+            profile: applyAutoTranslationGender(character.profile, gender),
+          }
           : character
       )),
     }))
@@ -2881,7 +2892,8 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       vocabularyType: nextVocabularyType,
       temperament: nextTemperament,
     }
-    return mergeCharacterNotesAnalysisIntoProfile(mergedProfile, mergedProfile.characterUserNotes)
+    const analyzedProfile = mergeCharacterNotesAnalysisIntoProfile(mergedProfile, mergedProfile.characterUserNotes)
+    return applyAutoTranslationGender(analyzedProfile, cast.gender)
   }
 
   useEffect(() => {
@@ -2912,6 +2924,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
           : (existing?.gender ?? 'Unknown')
 
         const prefilledProfile = buildPrefilledProfile(existing?.profile, cast)
+        const nextProfile = applyAutoTranslationGender(prefilledProfile, gender)
 
         return {
           id: existing?.id ?? cast.id ?? numericIdFromName(cast.name),
@@ -2926,7 +2939,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
           gender,
           avatarColor: existing?.avatarColor ?? cast.avatarColor ?? '#4f8ad6',
           style: existing?.style ?? cast.inferredStyle ?? null,
-          profile: prefilledProfile,
+          profile: nextProfile,
         } satisfies CharacterStyleAssignment
       })
       // Source of truth dla Kroku 3: finalna, zmergowana baza robocza z Kroku 1/2.
@@ -4199,7 +4212,7 @@ export default function App(): React.ReactElement {
         gender: 'Unknown' as CharacterGender,
         avatarColor: '#4f8ad6',
         style: null,
-        profile: createDefaultProfile(),
+        profile: applyAutoTranslationGender(createDefaultProfile(), 'Unknown'),
       }))
 
       const next = { ...prev, characters: [...prev.characters, ...appended] }
@@ -4420,13 +4433,14 @@ export default function App(): React.ReactElement {
 
   const handleSaveCharacterEditor = (next: CharacterStyleAssignment): void => {
     setStyleSettings(prev => {
+      const syncedProfile = applyAutoTranslationGender(next.profile, next.gender)
       const normalized = {
         ...next,
         displayName: next.displayName?.trim() || next.name,
         originalName: next.originalName?.trim() || '',
         profile: updateEditedCharacterProfile(
-          prev.characters.find(item => item.id === next.id)?.profile ?? next.profile,
-          next.profile,
+          prev.characters.find(item => item.id === next.id)?.profile ?? syncedProfile,
+          syncedProfile,
         ),
       }
       const payload: ProjectTranslationStyleSettings = {
@@ -4455,7 +4469,7 @@ export default function App(): React.ReactElement {
               ...item,
               profile: {
                 ...item.profile,
-                translationGender: 'unknown',
+                translationGender: deriveTranslationGenderFromGender(item.gender),
                 speakingStyle: 'neutralny',
                 toneProfile: '',
                 translationNotes: '',
@@ -4741,6 +4755,22 @@ export default function App(): React.ReactElement {
       ))
       setProjectLineAssignments(nextAssignments)
       return nextRows
+    })
+    setStyleSettings(prev => {
+      let changed = false
+      const updatedCharacters = prev.characters.map(character => {
+        if (character.name !== normalizedCharacterName) return character
+        if (!shouldAutoSyncTranslationGender(character.profile)) return character
+        changed = true
+        return {
+          ...character,
+          profile: applyAutoTranslationGender(character.profile, character.gender),
+        }
+      })
+      if (!changed) return prev
+      const payload = { ...prev, updatedAt: new Date().toISOString(), characters: updatedCharacters }
+      saveProjectStyleSettings(payload)
+      return payload
     })
     setActiveAssignmentCharacter(normalizedCharacterName)
     setRecentCharacterHistory(prev => [

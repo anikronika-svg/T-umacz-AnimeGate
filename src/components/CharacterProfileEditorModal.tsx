@@ -7,6 +7,10 @@ import type {
   CharacterSpeakingStyle,
   CharacterTranslationGender,
 } from '../project/characterProfileModel'
+import {
+  applyAutoTranslationGender,
+  shouldAutoSyncTranslationGender,
+} from '../project/characterTranslationGender'
 
 const PANEL = {
   bg: '#1d1f2a',
@@ -117,7 +121,13 @@ export function CharacterProfileEditorModal({
                 value={draft.gender}
                 onChange={event => {
                   const nextValue = event.currentTarget.value as CharacterGender
-                  setDraft(prev => (prev ? { ...prev, gender: nextValue } : prev))
+                  setDraft(prev => {
+                    if (!prev) return prev
+                    const nextProfile = shouldAutoSyncTranslationGender(prev.profile)
+                      ? applyAutoTranslationGender(prev.profile, nextValue)
+                      : prev.profile
+                    return { ...prev, gender: nextValue, profile: nextProfile }
+                  })
                 }}
                 style={{ height: 30, background: PANEL.surface, border: `1px solid ${PANEL.border}`, color: PANEL.text, padding: '0 6px' }}
               >

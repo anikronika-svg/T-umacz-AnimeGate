@@ -1199,3 +1199,16 @@
   - `package.json` i `package-lock.json` ustawione na `1.0.41`.
 - Status:
   - brak potwierdzonego smoke testu UI po usunieciu funkcji (ryzyko regresji niezweryfikowane).
+
+## 54) Synchronizacja plci i rodzaju tlumaczenia (v1.0.43)
+- Dodano helper do synchronizacji rodzaju tlumaczenia z plcia:
+  - `src/project/characterTranslationGender.ts`
+- Edytor postaci:
+  - zmiana plci auto-ustawia `translationGender` gdy nie bylo ustawione lub bylo neutralne,
+  - brak nadpisania, gdy pole bylo ustawione recznie.
+- Auto-tworzenie postaci z dialogow i import z AniList:
+  - `translationGender` uzupelniane na podstawie plci, gdy brak recznego override.
+- Przypisanie postaci do linii:
+  - przy przypisaniu, profil postaci jest synchronizowany, jesli `translationGender` pozostawal `unknown`/`neutral`.
+- Testy:
+  - `src/project/characterTranslationGender.spec.ts`.
