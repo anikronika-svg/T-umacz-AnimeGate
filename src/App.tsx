@@ -72,6 +72,10 @@ import {
   isShortSubtitleUtterance,
   stabilizeTonePunctuation,
 } from './project/translationQualityGuards'
+import { polishGrammarEngine } from './project/polishGrammarEngine'
+import { dialogueStyleEngine } from './project/dialogueStyleEngine'
+import { enforceProjectTerminology } from './project/terminologyEnforcer'
+import { validateTranslationQuality } from './project/translationQualityValidator'
 import { buildDialogueContext } from './project/dialogueContextEngine'
 import { resolveTerminologyMatch, normalizeTerminologyKey } from './project/terminologyResolver'
 import { normalizeMemoryKey, resolveTranslationMemoryEntry } from './project/translationMemoryEngine'
@@ -5905,13 +5909,22 @@ export default function App(): React.ReactElement {
       translated = applyGenderCorrectionLocally(translated, context.gender)
     }
     translated = enforceTermHints(translated, extractTermHints(row.sourceRaw || row.source))
+    translated = polishGrammarEngine(translated)
+    translated = dialogueStyleEngine(translated)
+    translated = enforceProjectTerminology(translated, projectTerms)
     translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
-    let requiresManualCheck = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
+    const shortLineAggressive = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
+    let requiresManualCheck = shortLineAggressive
     if (shouldWarnFromClassifier) {
       requiresManualCheck = true
       appendTranslationLog(`Linia ${row.id}: niepewna klasyfikacja (mozliwy termin specjalny) — oznaczono do recznego sprawdzenia.`)
     }
-    if (requiresManualCheck) {
+    const quality = validateTranslationQuality(row.sourceRaw || row.source, translated, { terms: projectTerms })
+    if (quality.requiresManualCheck) {
+      requiresManualCheck = true
+      appendTranslationLog(`Linia ${row.id}: walidacja jakosci (${Math.round(quality.confidence * 100)}%) — oznaczono do sprawdzenia.`)
+    }
+    if (shortLineAggressive) {
       appendTranslationLog(`Linia ${row.id}: zbyt agresywne przepisanie krótkiej kwestii — oznaczono do ręcznego sprawdzenia.`)
     }
     if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
@@ -6117,16 +6130,26 @@ export default function App(): React.ReactElement {
 
             if (translatedBatch && translatedBatch.length === toTranslate.length) {
               const byId = new Map<number, string>()
+              const qualityById = new Map<number, boolean>()
               toTranslate.forEach((row, index) => {
                 let translated = translatedBatch?.[index] ?? ''
                 const context = getTranslationContextForRow(row)
                 translated = applyTranslationStyleLocally(translated, targetLang, context)
                 if (context.gender !== 'Unknown') translated = applyGenderCorrectionLocally(translated, context.gender)
                 translated = enforceTermHints(translated, extractTermHints(row.sourceRaw || row.source))
+                translated = polishGrammarEngine(translated)
+                translated = dialogueStyleEngine(translated)
+                translated = enforceProjectTerminology(translated, projectTerms)
+                translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
+                const quality = validateTranslationQuality(row.sourceRaw || row.source, translated, { terms: projectTerms })
                 if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
                   appendTranslationLog(`Linia ${row.id}: wynik podejrzany (batch, ${sourceLang}->${targetLang})`)
                 }
                 byId.set(row.id, translated)
+                qualityById.set(row.id, quality.requiresManualCheck)
+                if (quality.requiresManualCheck) {
+                  appendTranslationLog(`Linia ${row.id}: walidacja jakosci (${Math.round(quality.confidence * 100)}%) — oznaczono do sprawdzenia.`)
+                }
                 recordResult(row.id, 'done')
               })
               setRowsData(prev => prev.map(item => (
@@ -6135,7 +6158,7 @@ export default function App(): React.ReactElement {
                     ...item,
                     target: byId.get(item.id) as string,
                     pl: 'done',
-                    requiresManualCheck: false,
+                    requiresManualCheck: qualityById.get(item.id) ?? false,
                   }
                   : item
               )))
