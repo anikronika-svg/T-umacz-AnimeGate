@@ -8,6 +8,10 @@ describe('translationHeuristics', () => {
     expect(classifyUntranslatedLine('Red').kind).toBe('translate')
     expect(classifyUntranslatedLine('Hello, Uncle!').kind).toBe('translate')
     expect(classifyUntranslatedLine('Yes, Auntie!').kind).toBe('translate')
+    expect(classifyUntranslatedLine('Master!').kind).toBe('translate')
+    expect(classifyUntranslatedLine('Episode 15').kind).toBe('translate')
+    expect(classifyUntranslatedLine('Rabbit!').kind).toBe('translate')
+    expect(classifyUntranslatedLine('Kill.').kind).toBe('translate')
   })
 
   it('classifies clear proper nouns and special terms as copy', () => {

@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-13.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.45`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.46`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -1302,3 +1302,49 @@ Kluczowe wymagania:
   - `src/project/dialogueContextEngine.spec.ts`,
   - `src/project/terminologyResolver.spec.ts`,
   - `src/project/translationMemoryEngine.spec.ts`.
+
+## 59) Raport jakosciowy (PL01 vs PL02) — ocena po wdrozeniu kontekstu/terminologii/pamieci
+
+Metoda i ograniczenia:
+- Porownano dwa pliki ASS: 1044 linie dialogowe w kazdym, 167 roznic.
+- To porownanie dwoch juz przetlumaczonych plikow (PL01/PL02). Nie generowano nowego tlumaczenia aktualnym buildem, wiec wplyw modulow oceniono posrednio.
+
+Przyklady linii poprawionych przez kontekst (prawdopodobnie):
+- PL01: `Nie sądzę, żeby było\Ntakiej dziury.`
+  PL02: `Nie sądzę, żeby tam była\Nwcześniej takiej dziury.`
+  — dodany kontekst „tam była wcześniej”, wyglada na szerszy kontekst.
+- PL01: `Cóż, jeśli jest tak zmotywowana,\NMyślę, że jest w porządku.`
+  PL02: `Cóż, jeśli jest tak zmotywowana,\Nto chyba w porządku.`
+  — bardziej naturalne i krotsze.
+- PL01: `Hmm... Jeśli to była anomalia\Nmoże ze skarbca,`
+  PL02: `Hmm... Jeśli to była anomalia\Nze skarbca, to może,`
+  — plyniejsza skladnia.
+
+TerminologyResolver — brak potwierdzonych popraw, wykryte regresje:
+- `Mistrzu!` -> `Master!`
+- `Odcinek 15` -> `Episode 15`
+- `Królik!` -> `Rabbit!`
+
+TranslationMemoryEngine — brak potwierdzonych popraw, niespojnosci:
+- ten sam zwrot: `Mistrzu!` vs `Master!`
+- ten sam okrzyk: `Zabić.` vs `Kill.`
+- sugeruje to brak uzycia pamieci w generowaniu PL02 lub pominiecie w pipeline.
+
+Przyklady linii nadal slabych:
+- duplikacja skladni: `... jeśli\Njeśli zbadamy ...`
+- angielskie wtręty w polskim tlumaczeniu: `Master!`, `Episode 15`, `Rabbit!`, `Kill.`
+- nienaturalne dopelnienia: `instrukcjami, aby znaleźć relikty`
+- niespojny sens: `Jeden z produktów Noctus Cochlear...` / `Jeden z Noctus Cochlear...`
+
+Proponowany nastepny maly etap jakosciowy:
+- Language Leak Guard (wykrywanie angielskich tokenow w liniach Default + ponowne tlumaczenie tylko tych linii).
+- Twarde wymuszenie `project_terms.json` dla kluczowych terminow (Master/Mistrz, Episode/Odcinek, Rabbit/Królik) + seed slownika.
+
+## 60) Quality hardening — ograniczenie wyciekow EN + twardsza terminologia
+- Wzmocnienie klasyfikacji krotkich angielskich slow:
+  - `lineSemanticClassifier` traktuje `Master`, `Episode`, `Rabbit`, `Kill` jako normalne slowa do tlumaczenia.
+- Terminology enforcement:
+  - `project_terms.json` preferowane terminy sa przekazywane do promptow i DeepL context,
+  - po tlumaczeniu wymuszane sa zamiany terminow w linii (case-insensitive, word-boundary).
+- Terminology w batch:
+  - linie z dopasowaniem terminu omijaja batch i dostaja wynik ze slownika.

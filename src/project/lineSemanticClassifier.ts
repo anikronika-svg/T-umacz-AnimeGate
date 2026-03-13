@@ -25,6 +25,7 @@ const COMMON_TRANSLATABLE = new Set([
   'red', 'blue', 'green', 'black', 'white', 'go', 'run', 'stop', 'wait',
   'hello', 'hi', 'thanks', 'thank', 'sorry', 'please', 'auntie', 'uncle',
   'mom', 'dad', 'sir', 'maam', 'mr', 'mrs', 'ms', 'miss',
+  'master', 'episode', 'rabbit', 'kill',
 ])
 
 const COMMON_VERBS = new Set([

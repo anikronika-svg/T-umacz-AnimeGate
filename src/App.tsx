@@ -251,6 +251,7 @@ interface TranslationRequestContext {
   formalityPreference: string
   customPromptHint: string
   styleContext: string
+  termHints: string[]
   previousLinesContext: string[]
   nextLinesContext: string[]
   previousLineContinuation: string
@@ -4306,6 +4307,7 @@ export default function App(): React.ReactElement {
       styleContext: resolvedCharacterName
         ? buildTranslationStyleContext(styleSettings, resolvedCharacterName, gender)
         : '',
+      termHints: [],
       previousLinesContext: [],
       nextLinesContext: [],
       previousLineContinuation: '',
@@ -4360,6 +4362,34 @@ export default function App(): React.ReactElement {
     })
     return out
   }, [projectTerms])
+
+  const extractTermHints = (sourceRawOrPlain: string): Array<{ source: string; target: string }> => {
+    const normalized = normalizeTerminologyKey(sourceRawOrPlain)
+    if (!normalized) return []
+    const hints: Array<{ source: string; target: string }> = []
+    Object.entries(normalizedProjectTerms).forEach(([termKey, target]) => {
+      if (!termKey || !target) return
+      if (!normalized.includes(termKey)) return
+      hints.push({ source: termKey, target })
+    })
+    return hints.slice(0, 8)
+  }
+
+  const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+  const enforceTermHints = (translated: string, termHints: Array<{ source: string; target: string }>): string => {
+    if (!termHints.length) return translated
+    let next = translated
+    termHints.forEach(term => {
+      if (!term.source || !term.target) return
+      const pattern = escapeRegex(term.source)
+      const regex = new RegExp(`\\b${pattern}\\b`, 'gi')
+      if (regex.test(next)) {
+        next = next.replace(regex, term.target)
+      }
+    })
+    return next
+  }
 
   useEffect(() => {
     setSelectedSuggestionIndex(0)
@@ -5254,6 +5284,7 @@ export default function App(): React.ReactElement {
       context?.nextLineHint ? `Next subtitle hint: ${context.nextLineHint}` : '',
       context?.previousLinesContext?.length ? `Previous dialogue context: ${context.previousLinesContext.join(' | ')}` : '',
       context?.nextLinesContext?.length ? `Next dialogue context: ${context.nextLinesContext.join(' | ')}` : '',
+      context?.termHints?.length ? `Preferred terms (source -> target): ${context.termHints.join('; ')}` : '',
       context?.chunkPreviousHint ? `Chunk previous hint: ${context.chunkPreviousHint}` : '',
       context?.chunkNextHint ? `Chunk next hint: ${context.chunkNextHint}` : '',
     ].filter(Boolean)
@@ -5380,6 +5411,7 @@ export default function App(): React.ReactElement {
       : '',
     context?.nextLineHint ? `Next line hint: ${context.nextLineHint}` : '',
     context?.nextLinesContext?.length ? `Next dialogue context (up to 1 line): ${context.nextLinesContext.join(' | ')}` : '',
+    context?.termHints?.length ? `Terminology constraints (source -> target): ${context.termHints.join('; ')}` : '',
     context?.chunkPreviousHint ? `Current chunk previous semantic hint: ${context.chunkPreviousHint}` : '',
     context?.chunkNextHint ? `Current chunk next semantic hint: ${context.chunkNextHint}` : '',
     context?.isShortUtterance
@@ -5762,12 +5794,14 @@ export default function App(): React.ReactElement {
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
     const hints = buildTranslationLineContextHints(rowsData, rowIndex)
     const dialogueContext = buildDialogueContext(rowsData, rowIndex, { previousLines: 2, nextLines: 1 })
+    const termHints = extractTermHints(row.sourceRaw || row.source).map(term => `${term.source} -> ${term.target}`)
     const shortUtterance = isShortSubtitleUtterance(row.sourceRaw || row.source)
     const baseContext = getTranslationContextForRow(row)
     const baseWithDialogue = {
       ...baseContext,
       previousLinesContext: dialogueContext.previousLines,
       nextLinesContext: dialogueContext.nextLines,
+      termHints,
     }
     const context = (hints.previousLineContinuation || hints.nextLineHint || shortUtterance)
       ? {
@@ -5870,6 +5904,7 @@ export default function App(): React.ReactElement {
     if (context.gender !== 'Unknown') {
       translated = applyGenderCorrectionLocally(translated, context.gender)
     }
+    translated = enforceTermHints(translated, extractTermHints(row.sourceRaw || row.source))
     translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
     let requiresManualCheck = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
     if (shouldWarnFromClassifier) {
@@ -6002,8 +6037,14 @@ export default function App(): React.ReactElement {
           if (!canUseBatch) {
             appendTranslationLog(`Batch ${batchIndex + 1}: pomijam batch DeepL (aktywne style per-postac).`)
           }
+          const termResolved = new Map<number, string>()
           const memoryResolved = new Map<number, string>()
           const toTranslate = batchRows.filter(row => {
+            const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
+            if (termMatch) {
+              termResolved.set(row.id, termMatch)
+              return false
+            }
             const fromMemory = resolveMemoryTranslation(row)
             if (fromMemory) {
               memoryResolved.set(row.id, fromMemory)
@@ -6012,17 +6053,25 @@ export default function App(): React.ReactElement {
             return true
           })
 
-          if (memoryResolved.size > 0) {
+          if (termResolved.size > 0 || memoryResolved.size > 0) {
+            termResolved.forEach((_, id) => recordResult(id, 'done'))
             memoryResolved.forEach((_, id) => recordResult(id, 'done'))
             setRowsData(prev => prev.map(item => (
-              memoryResolved.has(item.id)
+              termResolved.has(item.id)
                 ? {
                   ...item,
-                  target: memoryResolved.get(item.id) as string,
+                  target: termResolved.get(item.id) as string,
                   pl: 'done',
                   requiresManualCheck: false,
                 }
-                : item
+                : memoryResolved.has(item.id)
+                  ? {
+                    ...item,
+                    target: memoryResolved.get(item.id) as string,
+                    pl: 'done',
+                    requiresManualCheck: false,
+                  }
+                  : item
             )))
           }
 
@@ -6073,6 +6122,7 @@ export default function App(): React.ReactElement {
                 const context = getTranslationContextForRow(row)
                 translated = applyTranslationStyleLocally(translated, targetLang, context)
                 if (context.gender !== 'Unknown') translated = applyGenderCorrectionLocally(translated, context.gender)
+                translated = enforceTermHints(translated, extractTermHints(row.sourceRaw || row.source))
                 if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
                   appendTranslationLog(`Linia ${row.id}: wynik podejrzany (batch, ${sourceLang}->${targetLang})`)
                 }

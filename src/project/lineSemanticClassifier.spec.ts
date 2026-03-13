@@ -8,6 +8,10 @@ describe('lineSemanticClassifier', () => {
     expect(classifyLineSemantic('Red').type).toBe('NORMAL_DIALOG')
     expect(classifyLineSemantic('Hello, Uncle!').type).toBe('NORMAL_DIALOG')
     expect(classifyLineSemantic('Yes, Auntie!').type).toBe('NORMAL_DIALOG')
+    expect(classifyLineSemantic('Master!').type).toBe('NORMAL_DIALOG')
+    expect(classifyLineSemantic('Episode 15').type).toBe('NORMAL_DIALOG')
+    expect(classifyLineSemantic('Rabbit!').type).toBe('NORMAL_DIALOG')
+    expect(classifyLineSemantic('Kill.').type).toBe('NORMAL_DIALOG')
   })
 
   it('classifies proper nouns and world terms', () => {
