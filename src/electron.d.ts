@@ -403,6 +403,15 @@ declare global {
         projectDir: string
         configPath: string
       }>
+      readProjectTextFile: (args: { projectDir: string; relativePath: string }) => Promise<{
+        ok: boolean
+        content?: string
+        error?: string
+      }>
+      writeProjectTextFile: (args: { projectDir: string; relativePath: string; content: string }) => Promise<{
+        ok: boolean
+        error?: string
+      }>
       openDetachedPreviewWindow: () => Promise<{ ok: boolean }>
       closeDetachedPreviewWindow: () => Promise<{ ok: boolean }>
       updateDetachedPreviewState: (state: {

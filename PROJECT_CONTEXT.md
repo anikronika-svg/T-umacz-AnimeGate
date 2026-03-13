@@ -1287,3 +1287,18 @@ Kluczowe wymagania:
   - `npm run build:renderer` OK,
   - `npm run build:electron` OK,
   - `npm run build:win` OK.
+
+## 58) DialogueContextEngine + TranslationMemoryEngine + TerminologyResolver (Etap 3-5)
+- DialogueContextEngine:
+  - `src/project/dialogueContextEngine.ts` (previousLines=2, nextLines=1),
+  - kontekst przekazywany do promptow i DeepL context.
+- TranslationMemoryEngine:
+  - `translationMemory.json` w katalogu projektu,
+  - automatyczny odczyt i zapis przez IPC.
+- TerminologyResolver:
+  - `project_terms.json` w katalogu projektu,
+  - dopasowanie terminu przed wywolaniem AI.
+- Testy:
+  - `src/project/dialogueContextEngine.spec.ts`,
+  - `src/project/terminologyResolver.spec.ts`,
+  - `src/project/translationMemoryEngine.spec.ts`.

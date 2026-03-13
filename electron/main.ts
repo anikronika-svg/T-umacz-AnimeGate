@@ -103,6 +103,12 @@ interface CreateProjectArgs {
   initialConfig: Omit<DiskProjectConfigV1, 'projectDir' | 'configPath' | 'createdAt' | 'updatedAt'>
 }
 
+interface ProjectTextFileArgs {
+  projectDir: string
+  relativePath: string
+  content?: string
+}
+
 const STARTUP_LOG_FILE = 'startup.log'
 
 type StartupLogLevel = 'INFO' | 'WARN' | 'ERROR'
@@ -164,6 +170,15 @@ function isApprovedPath(candidatePath: string): boolean {
     if (normalized === root || normalized.startsWith(root + path.sep)) return true
   }
   return false
+}
+
+function resolveProjectFilePath(projectDir: string, relativePath: string): string {
+  if (!projectDir) throw new Error('Brak folderu projektu.')
+  if (!relativePath) throw new Error('Brak sciezki pliku projektu.')
+  if (!isApprovedPath(projectDir)) throw new Error('Sciezka projektu nie zostala zatwierdzona.')
+  const resolved = path.resolve(projectDir, relativePath)
+  if (!isPathWithinRoot(projectDir, resolved)) throw new Error('Nieprawidlowa sciezka pliku projektu.')
+  return resolved
 }
 
 function isPrivateIpv4(host: string): boolean {
@@ -1100,6 +1115,28 @@ function setupFileIpc(): void {
     }
     const saved = await saveProjectConfigOnDisk(args.projectDir, args.config)
     return { ok: true, ...saved }
+  })
+  ipcMain.handle('project:readTextFile', async (_event, args: ProjectTextFileArgs) => {
+    try {
+      const filePath = resolveProjectFilePath(args.projectDir, args.relativePath)
+      const content = await fs.readFile(filePath, 'utf-8')
+      return { ok: true, content }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (code === 'ENOENT') return { ok: false, error: 'not-found' }
+      const message = error instanceof Error ? error.message : 'Nie udalo sie odczytac pliku projektu.'
+      return { ok: false, error: message }
+    }
+  })
+  ipcMain.handle('project:writeTextFile', async (_event, args: ProjectTextFileArgs) => {
+    try {
+      const filePath = resolveProjectFilePath(args.projectDir, args.relativePath)
+      await fs.writeFile(filePath, args.content ?? '', 'utf-8')
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac pliku projektu.'
+      return { ok: false, error: message }
+    }
   })
 
   ipcMain.handle('preview:openWindow', async () => {

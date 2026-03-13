@@ -72,6 +72,9 @@ import {
   isShortSubtitleUtterance,
   stabilizeTonePunctuation,
 } from './project/translationQualityGuards'
+import { buildDialogueContext } from './project/dialogueContextEngine'
+import { resolveTerminologyMatch, normalizeTerminologyKey } from './project/terminologyResolver'
+import { normalizeMemoryKey, resolveTranslationMemoryEntry } from './project/translationMemoryEngine'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -248,6 +251,8 @@ interface TranslationRequestContext {
   formalityPreference: string
   customPromptHint: string
   styleContext: string
+  previousLinesContext: string[]
+  nextLinesContext: string[]
   previousLineContinuation: string
   nextLineHint: string
   isShortUtterance: boolean
@@ -3882,6 +3887,7 @@ export default function App(): React.ReactElement {
   const [targetLang, setTargetLang] = useState('pl')
   const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => createProjectStyleSettings(currentProjectId, []))
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
+  const [projectTerms, setProjectTerms] = useState<Record<string, string>>({})
   const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(null)
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
@@ -3903,6 +3909,7 @@ export default function App(): React.ReactElement {
   const stopTranslationRef = useRef(false)
   const activeTranslationAbortRef = useRef<AbortController | null>(null)
   const providerCooldownUntilRef = useRef<number>(0)
+  const translationMemorySaveTimerRef = useRef<number | null>(null)
   const rowsDataRef = useRef<DialogRow[]>(rowsData)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const lastLineSyncFromVideoRef = useRef<number | null>(null)
@@ -3964,6 +3971,31 @@ export default function App(): React.ReactElement {
       }
     })
   }, [activeDiskProject, currentProjectId, seriesProjects])
+
+  useEffect(() => {
+    if (!activeDiskProject) {
+      setProjectTerms({})
+      return
+    }
+    void loadTranslationMemoryFromDisk(activeDiskProject.projectDir, activeDiskProject.projectId)
+    void loadProjectTermsFromDisk(activeDiskProject.projectDir)
+  }, [activeDiskProject?.projectDir, activeDiskProject?.projectId])
+
+  useEffect(() => {
+    if (!activeDiskProject) return () => undefined
+    if (translationMemorySaveTimerRef.current) {
+      clearTimeout(translationMemorySaveTimerRef.current)
+    }
+    translationMemorySaveTimerRef.current = window.setTimeout(() => {
+      void persistTranslationMemoryToDisk(memoryStore)
+    }, 600)
+    return () => {
+      if (translationMemorySaveTimerRef.current) {
+        clearTimeout(translationMemorySaveTimerRef.current)
+        translationMemorySaveTimerRef.current = null
+      }
+    }
+  }, [memoryStore.entries, activeDiskProject])
 
   useEffect(() => {
     // Fallback ustawiamy tylko gdy aktualnie wybrany silnik nie istnieje na liscie.
@@ -4274,6 +4306,8 @@ export default function App(): React.ReactElement {
       styleContext: resolvedCharacterName
         ? buildTranslationStyleContext(styleSettings, resolvedCharacterName, gender)
         : '',
+      previousLinesContext: [],
+      nextLinesContext: [],
       previousLineContinuation: '',
       nextLineHint: '',
       isShortUtterance: false,
@@ -4316,6 +4350,16 @@ export default function App(): React.ReactElement {
   const glossaryForClassifier = useMemo(() => (
     memoryStore.glossary.filter(entry => entry.active && (entry.projectId === currentProjectId || entry.projectId === 'Global'))
   ), [memoryStore.glossary, currentProjectId])
+
+  const normalizedProjectTerms = useMemo(() => {
+    const out: Record<string, string> = {}
+    Object.entries(projectTerms).forEach(([key, value]) => {
+      const normalized = normalizeTerminologyKey(key)
+      if (!normalized || out[normalized]) return
+      out[normalized] = value
+    })
+    return out
+  }, [projectTerms])
 
   useEffect(() => {
     setSelectedSuggestionIndex(0)
@@ -4741,6 +4785,137 @@ export default function App(): React.ReactElement {
     setTranslationLogs(prev => [`[${stamp}] ${message}`, ...prev].slice(0, 20))
   }
 
+  const mergeMemoryEntries = (existing: MemoryEntry[], incoming: MemoryEntry[], projectId: string): MemoryEntry[] => {
+    const seen = new Set<string>()
+    existing.forEach(entry => {
+      seen.add(`${normalizeMemoryKey(entry.source)}::${normalizeMemoryKey(entry.target)}::${entry.projectId}`)
+    })
+    let nextId = (existing.at(-1)?.id ?? 0) + 1
+    const merged = [...existing]
+    incoming.forEach(entry => {
+      const key = `${normalizeMemoryKey(entry.source)}::${normalizeMemoryKey(entry.target)}::${entry.projectId || projectId}`
+      if (!key || seen.has(key)) return
+      seen.add(key)
+      merged.push({ ...entry, id: nextId++ })
+    })
+    return merged
+  }
+
+  const buildMemoryEntriesFromPayload = (payload: unknown, projectId: string, startId: number): MemoryEntry[] => {
+    const now = new Date().toISOString()
+    let rawEntries: Array<{
+      source?: string
+      target?: string
+      character?: string
+      usageCount?: number
+      createdAt?: string
+    }> = []
+
+    if (payload && typeof payload === 'object') {
+      const typed = payload as { entries?: unknown; memory?: unknown }
+      if (Array.isArray(typed.entries)) {
+        rawEntries = typed.entries as typeof rawEntries
+      } else if (Array.isArray(typed.memory)) {
+        rawEntries = typed.memory as typeof rawEntries
+      } else {
+        const mapPayload = payload as Record<string, unknown>
+        rawEntries = Object.entries(mapPayload)
+          .filter(([, value]) => typeof value === 'string')
+          .map(([source, target]) => ({ source, target: target as string }))
+      }
+    }
+
+    let nextId = startId
+    return rawEntries
+      .filter(entry => typeof entry.source === 'string' && typeof entry.target === 'string')
+      .map(entry => ({
+        id: nextId++,
+        source: (entry.source ?? '').trim(),
+        target: (entry.target ?? '').trim(),
+        character: (entry.character ?? '').trim(),
+        projectId,
+        createdAt: entry.createdAt ?? now,
+        usageCount: Number.isFinite(entry.usageCount) ? Number(entry.usageCount) : 0,
+      }))
+      .filter(entry => entry.source && entry.target)
+  }
+
+  const loadTranslationMemoryFromDisk = async (projectDir: string, projectId: string): Promise<void> => {
+    if (!window.electronAPI?.readProjectTextFile) return
+    const result = await window.electronAPI.readProjectTextFile({
+      projectDir,
+      relativePath: 'translationMemory.json',
+    })
+    if (!result.ok || !result.content) return
+    try {
+      const parsed = JSON.parse(result.content)
+      setMemoryStore(prev => {
+        const startId = (prev.entries.at(-1)?.id ?? 0) + 1
+        const incoming = buildMemoryEntriesFromPayload(parsed, projectId, startId)
+        if (!incoming.length) return prev
+        return {
+          ...prev,
+          entries: mergeMemoryEntries(prev.entries, incoming, projectId),
+        }
+      })
+    } catch {
+      // ignore invalid file
+    }
+  }
+
+  const loadProjectTermsFromDisk = async (projectDir: string): Promise<void> => {
+    if (!window.electronAPI?.readProjectTextFile) return
+    const result = await window.electronAPI.readProjectTextFile({
+      projectDir,
+      relativePath: 'project_terms.json',
+    })
+    if (!result.ok || !result.content) {
+      setProjectTerms({})
+      return
+    }
+    try {
+      const parsed = JSON.parse(result.content) as Record<string, string> | { terms?: Record<string, string> }
+      const terms = (parsed as { terms?: Record<string, string> }).terms ?? parsed
+      if (!terms || typeof terms !== 'object') {
+        setProjectTerms({})
+        return
+      }
+      const cleaned: Record<string, string> = {}
+      Object.entries(terms).forEach(([key, value]) => {
+        if (typeof key !== 'string' || typeof value !== 'string') return
+        const normalized = normalizeTerminologyKey(key)
+        if (!normalized) return
+        cleaned[normalized] = value
+      })
+      setProjectTerms(cleaned)
+    } catch {
+      setProjectTerms({})
+    }
+  }
+
+  const persistTranslationMemoryToDisk = async (store: MemoryStore): Promise<void> => {
+    if (!activeDiskProject || !window.electronAPI?.writeProjectTextFile) return
+    const entries = store.entries
+      .filter(entry => entry.projectId === activeDiskProject.projectId)
+      .map(entry => ({
+        source: entry.source,
+        target: entry.target,
+        character: entry.character,
+        usageCount: entry.usageCount,
+        createdAt: entry.createdAt,
+      }))
+    const payload = {
+      projectId: activeDiskProject.projectId,
+      updatedAt: new Date().toISOString(),
+      entries,
+    }
+    await window.electronAPI.writeProjectTextFile({
+      projectDir: activeDiskProject.projectDir,
+      relativePath: 'translationMemory.json',
+      content: JSON.stringify(payload, null, 2),
+    })
+  }
+
   const applyCharacterToSelectedLines = (characterName: string): void => {
     const normalizedCharacterName = characterName.trim()
     if (!normalizedCharacterName) return
@@ -4863,9 +5038,7 @@ export default function App(): React.ReactElement {
   ])
 
   const resolveMemoryTranslation = (row: DialogRow): string | null => {
-    const exactMemory = memoryStore.entries
-      .filter(entry => entry.projectId === currentProjectId && entry.source === row.source)
-      .sort((a, b) => b.usageCount - a.usageCount)[0]
+    const exactMemory = resolveTranslationMemoryEntry(memoryStore.entries, row.source, currentProjectId)
     if (!exactMemory?.target) return null
     if (normalizeForComparison(exactMemory.target) === normalizeForComparison(row.source)) return null
     return exactMemory.target
@@ -5079,6 +5252,8 @@ export default function App(): React.ReactElement {
     const deepLContextLines = [
       context?.previousLineContinuation ? `Previous subtitle line: ${context.previousLineContinuation}` : '',
       context?.nextLineHint ? `Next subtitle hint: ${context.nextLineHint}` : '',
+      context?.previousLinesContext?.length ? `Previous dialogue context: ${context.previousLinesContext.join(' | ')}` : '',
+      context?.nextLinesContext?.length ? `Next dialogue context: ${context.nextLinesContext.join(' | ')}` : '',
       context?.chunkPreviousHint ? `Chunk previous hint: ${context.chunkPreviousHint}` : '',
       context?.chunkNextHint ? `Chunk next hint: ${context.chunkNextHint}` : '',
     ].filter(Boolean)
@@ -5199,10 +5374,12 @@ export default function App(): React.ReactElement {
       ? 'Sentence continuity: previous subtitle line ends with continuation punctuation. Treat current line as continuation of the same sentence.'
       : '',
     context?.previousLineContinuation ? `Previous line context: ${context.previousLineContinuation}` : '',
+    context?.previousLinesContext?.length ? `Previous dialogue context (up to 2 lines): ${context.previousLinesContext.join(' | ')}` : '',
     context?.nextLineHint
       ? 'Hint: current line may be truncated and continue in the next subtitle. Use next line as semantic hint, but translate only current line.'
       : '',
     context?.nextLineHint ? `Next line hint: ${context.nextLineHint}` : '',
+    context?.nextLinesContext?.length ? `Next dialogue context (up to 1 line): ${context.nextLinesContext.join(' | ')}` : '',
     context?.chunkPreviousHint ? `Current chunk previous semantic hint: ${context.chunkPreviousHint}` : '',
     context?.chunkNextHint ? `Current chunk next semantic hint: ${context.chunkNextHint}` : '',
     context?.isShortUtterance
@@ -5559,6 +5736,11 @@ export default function App(): React.ReactElement {
   }
 
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
+    const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
+    if (termMatch && mode === 'primary') {
+      appendTranslationLog(`Linia ${row.id}: dopasowano termin ze slownika projektu.`)
+      return { translated: termMatch, requiresManualCheck: false }
+    }
     const fromMemory = resolveMemoryTranslation(row)
     if (fromMemory && mode === 'primary') return { translated: fromMemory, requiresManualCheck: false }
     const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
@@ -5579,16 +5761,22 @@ export default function App(): React.ReactElement {
     const shouldWarnFromClassifier = classification.kind === 'warn'
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
     const hints = buildTranslationLineContextHints(rowsData, rowIndex)
+    const dialogueContext = buildDialogueContext(rowsData, rowIndex, { previousLines: 2, nextLines: 1 })
     const shortUtterance = isShortSubtitleUtterance(row.sourceRaw || row.source)
     const baseContext = getTranslationContextForRow(row)
+    const baseWithDialogue = {
+      ...baseContext,
+      previousLinesContext: dialogueContext.previousLines,
+      nextLinesContext: dialogueContext.nextLines,
+    }
     const context = (hints.previousLineContinuation || hints.nextLineHint || shortUtterance)
       ? {
-        ...baseContext,
+        ...baseWithDialogue,
         previousLineContinuation: hints.previousLineContinuation,
         nextLineHint: hints.nextLineHint,
         isShortUtterance: shortUtterance,
       }
-      : baseContext
+      : baseWithDialogue
     const controller = new AbortController()
     activeTranslationAbortRef.current = controller
     const backoffMs = [2000, 5000, 9000, 14000]

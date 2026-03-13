@@ -73,6 +73,12 @@ interface ApiRequestResult {
   }
 }
 
+interface ProjectTextFileResult {
+  ok: boolean
+  content?: string
+  error?: string
+}
+
 interface DiskProjectCharacterProfile {
   archetype: string
   characterTypeId?: string
@@ -229,6 +235,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('project:open', projectPath),
   saveProjectConfig: (args: { projectDir: string; config: DiskProjectConfigV1 }): Promise<{ ok: boolean; projectDir: string; configPath: string; config: DiskProjectConfigV1 }> =>
     ipcRenderer.invoke('project:saveConfig', args),
+  readProjectTextFile: (args: { projectDir: string; relativePath: string }): Promise<ProjectTextFileResult> =>
+    ipcRenderer.invoke('project:readTextFile', args),
+  writeProjectTextFile: (args: { projectDir: string; relativePath: string; content: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('project:writeTextFile', args),
   openDetachedPreviewWindow: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('preview:openWindow'),
   closeDetachedPreviewWindow: (): Promise<{ ok: boolean }> =>
