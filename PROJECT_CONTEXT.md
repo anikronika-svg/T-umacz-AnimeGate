@@ -26,6 +26,35 @@
   - `electron/updater.ts` – runtime updater (main process), check for updates po starcie + event logging.
   - `electron/preload.ts` – `window.electronAPI`.
 
+## Translation Engine Vision
+Cel: stworzyc zaawansowany silnik tlumaczen napisow anime, ktory uwzglednia postacie, plec, styl mowienia, kontekst dialogu, terminologie swiata, strukture jezykowa oraz pamiec tlumaczen. System ma dzialac dla wszystkich gatunkow anime, byc elastyczny i rozszerzalny.
+
+Pipeline docelowy:
+- SubtitleParser
+- SpeakerTagParser
+- CharacterIdentityResolver
+- CharacterMetadataResolver
+- GenderResolver
+- DialogueContextEngine
+- LineSemanticClassifier
+- TerminologyResolver
+- CharacterPersonalityEngine
+- TranslationEngine
+- TranslationPostProcessor
+- WarningSystem
+- TranslationMemoryEngine
+
+Kluczowe wymagania:
+- Rozpoznawanie postaci po imieniu/nazwisku/aliasach i mapowanie `speakerAliasMap`.
+- Rozpoznawanie trybu wypowiedzi (N/M/S/V) przez parser tagu.
+- Klasyfikacja linii na: NORMAL_DIALOG, PROPER_NOUN, WORLD_TERM, INTERJECTION, SHORT_REPLY, UNCERTAIN.
+- Terminologia projektu przez slownik `project_terms.json`.
+- Profil postaci opisowy (tone, formality, energyLevel, aggressiveness, politeness, humorStyle, speechPace, vocabularyLevel, emotionality, confidence).
+- Post-processor naprawia typowe bledy AI + formy plciowe.
+- Warningi tylko dla nieznanych terminow/nazw i niepewnego tlumaczenia.
+- UI: przycisk "Przypisz dane z postaci" do ponownego resolvera i synchronizacji.
+- Pamiec tlumaczen (translationMemory.json) przed wywolaniem AI.
+
 ## 3) Moduly funkcjonalne
 
 ### 3.1 Pipeline tlumaczenia
@@ -1231,3 +1260,17 @@
   - `npm run build:renderer` OK,
   - `npm run build:electron` OK,
   - `npm run build:win` OK (po zamknieciu uruchomionej aplikacji blokujacej `ffmpeg.exe`).
+
+## 56) LineSemanticClassifier (Etap 1 roadmapy)
+- Dodany klasyfikator semantyki linii:
+  - `src/project/lineSemanticClassifier.ts`
+  - typy: `NORMAL_DIALOG`, `PROPER_NOUN`, `WORLD_TERM`, `INTERJECTION`, `SHORT_REPLY`, `UNCERTAIN`.
+- Integracja z heurystykami tlumaczenia:
+  - `src/project/translationHeuristics.ts` mapuje typy na `translate/copy/warn`.
+- Testy regresji:
+  - `src/project/lineSemanticClassifier.spec.ts`.
+- Weryfikacja:
+  - `npm run test -- --run` OK,
+  - `npm run build:renderer` OK,
+  - `npm run build:electron` OK,
+  - `npm run build:win` OK.
