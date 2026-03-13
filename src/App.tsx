@@ -65,7 +65,7 @@ import {
 } from './project/assTranslationPreprocessor'
 import { sanitizeTranslationChunk } from './project/subtitleTextSanitizer'
 import { buildTranslationLineContextHints } from './project/translationContextBuilder'
-import { isNonTranslatableProperNounLine } from './project/translationHeuristics'
+import { classifyUntranslatedLine } from './project/translationHeuristics'
 import {
   buildChunkContextHints,
   isOverAggressiveShortLineRewrite,
@@ -4313,6 +4313,10 @@ export default function App(): React.ReactElement {
       .slice(0, 5)
   }, [memoryStore.entries, selectedRow, currentProjectId])
 
+  const glossaryForClassifier = useMemo(() => (
+    memoryStore.glossary.filter(entry => entry.active && (entry.projectId === currentProjectId || entry.projectId === 'Global'))
+  ), [memoryStore.glossary, currentProjectId])
+
   useEffect(() => {
     setSelectedSuggestionIndex(0)
   }, [selectedId, suggestions.length, selectedRow?.target])
@@ -5557,13 +5561,22 @@ export default function App(): React.ReactElement {
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
     const fromMemory = resolveMemoryTranslation(row)
     if (fromMemory && mode === 'primary') return { translated: fromMemory, requiresManualCheck: false }
-    if (isNonTranslatableProperNounLine(row.sourceRaw || row.source)) {
-      appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — pomijam silnik i oznaczam do recznego sprawdzenia.`)
+    const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
+    if (classification.kind === 'glossary') {
+      appendTranslationLog(`Linia ${row.id}: dopasowano glosariusz — uzywam preferowanego tlumaczenia.`)
       return {
-        translated: row.source.trim(),
-        requiresManualCheck: true,
+        translated: (classification.preferred ?? row.source).trim(),
+        requiresManualCheck: false,
       }
     }
+    if (classification.kind === 'copy') {
+      appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — przepisuje 1:1 bez ostrzezenia.`)
+      return {
+        translated: row.source.trim(),
+        requiresManualCheck: false,
+      }
+    }
+    const shouldWarnFromClassifier = classification.kind === 'warn'
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
     const hints = buildTranslationLineContextHints(rowsData, rowIndex)
     const shortUtterance = isShortSubtitleUtterance(row.sourceRaw || row.source)
@@ -5670,7 +5683,11 @@ export default function App(): React.ReactElement {
       translated = applyGenderCorrectionLocally(translated, context.gender)
     }
     translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
-    const requiresManualCheck = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
+    let requiresManualCheck = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
+    if (shouldWarnFromClassifier) {
+      requiresManualCheck = true
+      appendTranslationLog(`Linia ${row.id}: niepewna klasyfikacja (mozliwy termin specjalny) — oznaczono do recznego sprawdzenia.`)
+    }
     if (requiresManualCheck) {
       appendTranslationLog(`Linia ${row.id}: zbyt agresywne przepisanie krótkiej kwestii — oznaczono do ręcznego sprawdzenia.`)
     }

@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-13.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.43`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.44`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -1212,3 +1212,22 @@
   - przy przypisaniu, profil postaci jest synchronizowany, jesli `translationGender` pozostawal `unknown`/`neutral`.
 - Testy:
   - `src/project/characterTranslationGender.spec.ts`.
+
+## 55) Poprawa klasyfikacji linii nieprzetlumaczalnych (v1.0.44)
+- Zmieniona logika klasyfikacji:
+  - trzy stany: `translate`, `copy`, `warn` + dopasowanie glosariusza,
+  - krotkie normalne kwestie nie sa automatycznie przepisywane 1:1.
+- Nowy klasyfikator:
+  - `src/project/translationHeuristics.ts` (export `classifyUntranslatedLine`),
+  - zgodny fallback przez `isNonTranslatableProperNounLine`.
+- Integracja w tlumaczeniu:
+  - `src/App.tsx` uzywa klasyfikatora i glosariusza projektu,
+  - `copy` nie ustawia ostrzezenia,
+  - `warn` wymusza reczne sprawdzenie.
+- Testy:
+  - `src/project/translationHeuristics.spec.ts`.
+- Weryfikacja:
+  - `npm run test -- --run` OK,
+  - `npm run build:renderer` OK,
+  - `npm run build:electron` OK,
+  - `npm run build:win` OK (po zamknieciu uruchomionej aplikacji blokujacej `ffmpeg.exe`).
