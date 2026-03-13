@@ -46,10 +46,14 @@ import {
 import {
   normalizeCharacterAlias as normalizeCharacterAliasByRules,
   normalizeCharacterName as normalizeCharacterNameByRules,
-  parseCharacterSpeaker,
-  resolveCharacterByName,
   stripCharacterTechnicalMetadata,
 } from './project/characterNameMatching'
+import {
+  buildIdentityAliasMap,
+  resolveCharacterIdentity,
+  resolveCharacterNameOrRaw,
+  shouldCreatePlaceholderCharacter,
+} from './project/characterIdentityResolver'
 import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import {
@@ -798,8 +802,7 @@ function resolveGenderForCharacterName(
   characters: Array<{ name: string; gender: CharacterGender }>,
   aliasMap?: Map<string, string>,
 ): CharacterGender {
-  const match = resolveCharacterForLineName(characterName, characters, aliasMap)
-  return match?.gender ?? 'Unknown'
+  return resolveCharacterIdentity(characterName, characters, aliasMap).character?.gender ?? 'Unknown'
 }
 
 function resolveCharacterForLineName<T extends { name: string; gender: CharacterGender }>(
@@ -807,8 +810,7 @@ function resolveCharacterForLineName<T extends { name: string; gender: Character
   characters: T[],
   aliasMap?: Map<string, string>,
 ): T | null {
-  return resolveCharacterByName(characterName, characters, { preferKnownGender: true, aliasMap })
-    ?? resolveCharacterByName(characterName, characters, { aliasMap })
+  return resolveCharacterIdentity(characterName, characters, aliasMap).character
 }
 
 function numericIdFromName(seed: string): number {
@@ -3704,6 +3706,8 @@ function LinesView({
   onSelect,
   onActivateLine,
   getGenderForCharacter,
+  onSyncCharacters,
+  selectedCount,
 }: {
   rows: DialogRow[]
   hasActiveProject: boolean
@@ -3713,6 +3717,8 @@ function LinesView({
   onSelect: (id: number, opts?: { additive?: boolean; range?: boolean }) => void
   onActivateLine: (id: number) => void
   getGenderForCharacter: (characterName: string) => CharacterGender | undefined
+  onSyncCharacters: () => void
+  selectedCount: number
 }): React.ReactElement {
   const listRef = useRef<HTMLDivElement | null>(null)
   const col = '30px 34px 94px 94px 78px 122px 1fr 1fr'
@@ -3728,8 +3734,16 @@ function LinesView({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-      <div style={{ height: 20, display: 'flex', alignItems: 'center', padding: '0 8px', background: '#1d1f2a', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.accent, fontWeight: 700 }}>
-        Lista dialogow
+      <div style={{ height: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', background: '#1d1f2a', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.accent, fontWeight: 700 }}>
+        <span>Lista dialogow</span>
+        <button
+          style={{ ...BASE_BTN, height: 18, padding: '0 8px', fontSize: 10 }}
+          onClick={onSyncCharacters}
+          disabled={rows.length === 0}
+          title="Ponownie dopasuj postacie i przepisz dane z panelu postaci"
+        >
+          Przypisz dane z postaci {selectedCount > 0 ? `(zaznaczone: ${selectedCount})` : '(wszystkie)'}
+        </button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: col, background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: '0 8px', height: 24, alignItems: 'center', gap: 4, flexShrink: 0 }}>
         {headers.map(h => (
@@ -4128,23 +4142,10 @@ export default function App(): React.ReactElement {
       endSec: Math.max(timing.endSec, timing.startSec + 0.08),
     }
   }, [selectedId, lineTimingById])
-  const identityAliasMap = useMemo(() => {
-    const map = new Map<string, string>()
-    projectLineAssignments.forEach(assignment => {
-      const canonical = assignment.resolvedCharacterName?.trim()
-      if (!canonical) return
-      const alias = normalizeCharacterAlias(assignment.rawCharacter || '')
-      if (!alias) return
-      if (!map.has(alias)) {
-        map.set(alias, canonical)
-      }
-      const normalized = normalizeCharacterName(assignment.rawCharacter || '')
-      if (normalized && !map.has(normalized)) {
-        map.set(normalized, canonical)
-      }
-    })
-    return map
-  }, [projectLineAssignments])
+  const identityAliasMap = useMemo(
+    () => buildIdentityAliasMap(projectLineAssignments),
+    [projectLineAssignments],
+  )
   const selectedCharacter = selectedRow?.character
     ? resolveCharacterForLineName(selectedRow.character, styleSettings.characters, identityAliasMap)
     : null
@@ -4171,10 +4172,14 @@ export default function App(): React.ReactElement {
       const existingNames = new Set(prev.characters.map(character => normalizeCharacterName(character.name.trim())))
       const queuedNames = new Set<string>()
       const toAdd = rowsData
-        .map(row => stripCharacterTechnicalMetadata(row.character))
-        .filter(Boolean)
-        .filter(name => {
-          const normalized = normalizeCharacterName(name)
+        .map(row => ({
+          raw: row.character,
+          name: stripCharacterTechnicalMetadata(row.character),
+        }))
+        .filter(item => item.name)
+        .filter(item => {
+          if (!shouldCreatePlaceholderCharacter(item.raw, prev.characters, identityAliasMap)) return false
+          const normalized = normalizeCharacterName(item.name)
           if (existingNames.has(normalized)) return false
           if (queuedNames.has(normalized)) return false
           queuedNames.add(normalized)
@@ -4183,11 +4188,11 @@ export default function App(): React.ReactElement {
 
       if (!toAdd.length) return prev
 
-      const appended = toAdd.map(name => ({
-        id: localIdFromName(name),
-        name,
-        displayName: name,
-        originalName: name,
+      const appended = toAdd.map(item => ({
+        id: localIdFromName(item.name),
+        name: item.name,
+        displayName: item.name,
+        originalName: item.name,
         imageUrl: null,
         avatarPath: null,
         avatarUrl: null,
@@ -4215,10 +4220,9 @@ export default function App(): React.ReactElement {
   void styleContext
 
   const getTranslationContextForRow = (row: DialogRow): TranslationRequestContext => {
-    const speakerMeta = parseCharacterSpeaker(row.character.trim())
-    const matchedCharacter = resolveCharacterForLineName(speakerMeta.baseName, styleSettings.characters, identityAliasMap)
+    const identity = resolveCharacterIdentity(row.character.trim(), styleSettings.characters, identityAliasMap)
     const normalizedName = normalizeCharacterName(row.character.trim())
-    const character = matchedCharacter ?? styleSettings.characters.find(item => normalizeCharacterName(item.name) === normalizedName)
+    const character = identity.character ?? styleSettings.characters.find(item => normalizeCharacterName(item.name) === normalizedName)
     const gender = character?.gender ?? characterGenderByName.get(normalizedName) ?? 'Unknown'
     const resolvedCharacterName = character?.name ?? row.character.trim() ?? 'Narrator'
     const effectiveStyle = resolveEffectiveStyle(styleSettings, resolvedCharacterName)
@@ -4262,7 +4266,7 @@ export default function App(): React.ReactElement {
       isShortUtterance: false,
       chunkPreviousHint: '',
       chunkNextHint: '',
-      speakerModeTag: speakerMeta.modeTagRaw,
+      speakerModeTag: identity.speaker.modeTagRaw,
     }
   }
 
@@ -4502,7 +4506,7 @@ export default function App(): React.ReactElement {
     const meta = seriesProjects.find(project => project.id === projectId)
     const title = titleOverride ?? meta?.title ?? projectId
     const lineCharacterAssignments = buildProjectLineAssignments(rowsData, rawCharacter => (
-      resolveCharacterForLineName(rawCharacter, styleSettings.characters, identityAliasMap)?.name ?? rawCharacter
+      resolveCharacterNameOrRaw(rawCharacter, styleSettings.characters, identityAliasMap)
     ))
 
     return mapAppStateToProjectConfig({
@@ -4733,7 +4737,7 @@ export default function App(): React.ReactElement {
           : row
       ))
       const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
-        resolveCharacterForLineName(rawCharacter, styleSettings.characters, identityAliasMap)?.name ?? rawCharacter
+        resolveCharacterNameOrRaw(rawCharacter, styleSettings.characters, identityAliasMap)
       ))
       setProjectLineAssignments(nextAssignments)
       return nextRows
@@ -4758,13 +4762,41 @@ export default function App(): React.ReactElement {
           : row
       ))
       const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
-        resolveCharacterForLineName(rawCharacter, styleSettings.characters, identityAliasMap)?.name ?? rawCharacter
+        resolveCharacterNameOrRaw(rawCharacter, styleSettings.characters, identityAliasMap)
       ))
       setProjectLineAssignments(nextAssignments)
       return nextRows
     })
     setActiveAssignmentCharacter('')
     appendTranslationLog(`Wyczyszczono przypisanie postaci dla ${selectedLineIds.size} linii.`)
+  }
+
+  const handleSyncCharactersFromAssignments = (): void => {
+    if (rowsData.length === 0) {
+      appendTranslationLog('Brak linii do synchronizacji postaci.')
+      return
+    }
+    const targetIds = selectedLineIds.size > 0
+      ? selectedLineIds
+      : new Set(rowsData.map(row => row.id))
+    let updatedCount = 0
+    setRowsData(prev => {
+      const nextRows = prev.map(row => {
+        if (!targetIds.has(row.id)) return row
+        const identity = resolveCharacterIdentity(row.character, styleSettings.characters, identityAliasMap)
+        if (!identity.character) return row
+        if (row.character === identity.character.name) return row
+        updatedCount += 1
+        return { ...row, character: identity.character.name }
+      })
+      const nextAssignments = buildProjectLineAssignments(nextRows, rawCharacter => (
+        resolveCharacterNameOrRaw(rawCharacter, styleSettings.characters, identityAliasMap)
+      ))
+      setProjectLineAssignments(nextAssignments)
+      return nextRows
+    })
+    const scopeLabel = selectedLineIds.size > 0 ? 'zaznaczonych' : 'wszystkich'
+    appendTranslationLog(`Przypisano dane z postaci dla ${updatedCount} linii (${scopeLabel}).`)
   }
 
   useEffect(() => {
@@ -6586,6 +6618,8 @@ export default function App(): React.ReactElement {
             onSelect={handleSelectLine}
             onActivateLine={handleActivateLine}
             getGenderForCharacter={(characterName) => resolveGenderForCharacterName(characterName.trim(), styleSettings.characters, identityAliasMap)}
+            onSyncCharacters={handleSyncCharactersFromAssignments}
+            selectedCount={selectedLineIds.size}
           />
           <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 8px', fontSize: 11, color: C.textDim, background: '#1b1c24' }}>
             Aktywny styl: <strong style={{ color: C.accentY }}>{effectiveStyleLabel}</strong>

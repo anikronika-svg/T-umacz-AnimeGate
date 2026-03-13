@@ -1,9 +1,9 @@
 # PROJECT CONTEXT – Tlumacz AnimeGate
 
 ## 1) Stan projektu
-- Data aktualizacji: 2026-03-11.
+- Data aktualizacji: 2026-03-13.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.23`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.41`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -1185,3 +1185,17 @@
   - `npm run build:renderer` OK,
   - `npm run build:electron` OK,
   - `npm run build:win` OK.
+
+## 53) Porzadki po release 1.0.41 (lokalne zmiany Claudi)
+- Porzadki w typach profilu postaci:
+  - `src/project/characterProfileModel.ts`: dodany jawny `CharacterArchetypeId`, walidacja `archetype`.
+  - `src/translationStyle.ts`: re-export `CharacterArchetypeId`, usuniecie duplikatu typu.
+  - `src/project/projectMapper.ts`: doprecyzowanie typow `translationGender` / `speakingStyle` (rzuty).
+- Usuniecie kodu uznanego za martwy:
+  - `src/App.tsx`: usuniete `handleCreateSeriesProject`, `handleVideoStop`, `handleVideoSeekRelative`.
+- Ekspozycja komponentow:
+  - `src/App.tsx`: `ProjectBar` i `VideoPanel` jako `export`.
+- Wersja:
+  - `package.json` i `package-lock.json` ustawione na `1.0.41`.
+- Status:
+  - brak potwierdzonego smoke testu UI po usunieciu funkcji (ryzyko regresji niezweryfikowane).
