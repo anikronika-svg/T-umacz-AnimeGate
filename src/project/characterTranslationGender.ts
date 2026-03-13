@@ -1,5 +1,6 @@
 import type { CharacterGender } from '../translationStyle'
 import type { CharacterSpeechProfile, CharacterTranslationGender } from './characterProfileModel'
+import { resolveTranslationGender } from './genderResolver'
 
 export function deriveTranslationGenderFromGender(gender: CharacterGender): CharacterTranslationGender {
   if (gender === 'Male') return 'masculine'
@@ -18,9 +19,13 @@ export function applyAutoTranslationGender(
   profile: CharacterSpeechProfile,
   gender: CharacterGender,
 ): CharacterSpeechProfile {
-  if (!shouldAutoSyncTranslationGender(profile)) return profile
+  const nextTranslationGender = resolveTranslationGender(
+    { gender },
+    { translationGender: profile.translationGender, userOverrideGender: profile.manualOverrides?.translationGender },
+  )
+  if (nextTranslationGender === profile.translationGender) return profile
   return {
     ...profile,
-    translationGender: deriveTranslationGenderFromGender(gender),
+    translationGender: nextTranslationGender,
   }
 }

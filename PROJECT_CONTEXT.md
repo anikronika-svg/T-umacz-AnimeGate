@@ -3,7 +3,7 @@
 ## 1) Stan projektu
 - Data aktualizacji: 2026-03-13.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.44`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.45`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -1269,6 +1269,19 @@ Kluczowe wymagania:
   - `src/project/translationHeuristics.ts` mapuje typy na `translate/copy/warn`.
 - Testy regresji:
   - `src/project/lineSemanticClassifier.spec.ts`.
+- Weryfikacja:
+  - `npm run test -- --run` OK,
+  - `npm run build:renderer` OK,
+  - `npm run build:electron` OK,
+  - `npm run build:win` OK.
+
+## 57) GenderResolver (Etap 2 roadmapy)
+- Nowy resolver rodzaju tlumaczenia:
+  - `src/project/genderResolver.ts` (zgodny z manual override).
+- Integracja auto-sync:
+  - `src/project/characterTranslationGender.ts` korzysta z resolvera.
+- Testy:
+  - `src/project/genderResolver.spec.ts`.
 - Weryfikacja:
   - `npm run test -- --run` OK,
   - `npm run build:renderer` OK,
