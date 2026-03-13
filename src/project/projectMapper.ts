@@ -9,6 +9,8 @@ import {
 } from '../translationStyle'
 import {
   normalizeGlobalStyleProfile,
+  type CharacterSpeakingStyle,
+  type CharacterTranslationGender,
   type ProjectGlobalStyleProfile,
 } from './characterProfileModel'
 
@@ -191,8 +193,8 @@ function mapDiskToCharacter(character: DiskProjectCharacter, fallbackId: number)
     politenessLevel: character.profile?.politenessLevel || defaults.politenessLevel,
     vocabularyType: character.profile?.vocabularyType || defaults.vocabularyType,
     temperament: character.profile?.temperament || defaults.temperament,
-    translationGender: character.profile?.translationGender || defaults.translationGender,
-    speakingStyle: character.profile?.speakingStyle || defaults.speakingStyle,
+    translationGender: (character.profile?.translationGender as CharacterTranslationGender | undefined) || defaults.translationGender,
+    speakingStyle: (character.profile?.speakingStyle as CharacterSpeakingStyle | undefined) || defaults.speakingStyle,
     toneProfile: character.profile?.toneProfile || defaults.toneProfile,
     personalityTraits: Array.isArray(character.profile?.personalityTraits)
       ? character.profile.personalityTraits.filter(Boolean)

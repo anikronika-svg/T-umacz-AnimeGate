@@ -1,5 +1,18 @@
+export type CharacterArchetypeId =
+  | 'default'
+  | 'tsundere'
+  | 'formal_knight'
+  | 'child'
+  | 'elderly_man'
+  | 'calm_girl'
+  | 'energetic_girl'
+  | 'cold_professional'
+  | 'arrogant_noble'
+  | 'shy'
+  | 'comic_slacker'
+
 export interface CharacterSpeechProfile {
-  archetype: string
+  archetype: CharacterArchetypeId
   characterTypeId: string
   characterSubtypeId: string
   characterUserNotes: string
@@ -69,6 +82,11 @@ export type CharacterSpeechProfileManualField =
   | 'characterTypeId'
   | 'characterSubtypeId'
   | 'archetype'
+
+const ARCHETYPE_VALUES = new Set<CharacterArchetypeId>([
+  'default', 'tsundere', 'formal_knight', 'child', 'elderly_man',
+  'calm_girl', 'energetic_girl', 'cold_professional', 'arrogant_noble', 'shy', 'comic_slacker',
+])
 
 const SPEAKING_STYLE_VALUES = new Set<CharacterSpeakingStyle>([
   'neutralny',
@@ -155,7 +173,9 @@ export function normalizeCharacterSpeechProfile(
   const createdAt = normalizeProfileUpdatedAt(profile?.createdAt, defaults.createdAt)
   const updatedAt = normalizeProfileUpdatedAt(profile?.updatedAt, createdAt)
   return {
-    archetype: profile?.archetype ?? defaults.archetype,
+    archetype: profile?.archetype != null && ARCHETYPE_VALUES.has(profile.archetype)
+      ? profile.archetype
+      : defaults.archetype,
     characterTypeId: profile?.characterTypeId ?? defaults.characterTypeId,
     characterSubtypeId: profile?.characterSubtypeId ?? defaults.characterSubtypeId,
     characterUserNotes: profile?.characterUserNotes ?? defaults.characterUserNotes,

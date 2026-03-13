@@ -3,9 +3,12 @@ import {
   createDefaultGlobalStyleProfile,
   normalizeCharacterSpeechProfile,
   normalizeGlobalStyleProfile,
+  type CharacterArchetypeId,
   type CharacterSpeechProfile,
   type ProjectGlobalStyleProfile,
 } from './project/characterProfileModel'
+
+export type { CharacterArchetypeId }
 import { resolveCharacterByName } from './project/characterNameMatching'
 
 export type CharacterGender = 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Unknown'
@@ -31,19 +34,6 @@ export interface TranslationStyleOption {
   hint: string
 }
 
-export type CharacterArchetypeId =
-  | 'default'
-  | 'tsundere'
-  | 'formal_knight'
-  | 'child'
-  | 'elderly_man'
-  | 'calm_girl'
-  | 'energetic_girl'
-  | 'cold_professional'
-  | 'arrogant_noble'
-  | 'shy'
-  | 'comic_slacker'
-
 export interface CharacterArchetypeOption {
   id: CharacterArchetypeId
   label: string
@@ -51,9 +41,7 @@ export interface CharacterArchetypeOption {
   toneRule: string
 }
 
-export type CharacterStyleProfile = CharacterSpeechProfile & {
-  archetype: CharacterArchetypeId
-}
+export type CharacterStyleProfile = CharacterSpeechProfile
 
 export interface CharacterStyleAssignment {
   id: number
@@ -216,11 +204,11 @@ export function getArchetypeToneRule(archetypeId: CharacterArchetypeId): string 
 }
 
 export function createDefaultProfile(): CharacterStyleProfile {
-  return normalizeCharacterSpeechProfile(createDefaultCharacterSpeechProfile()) as CharacterStyleProfile
+  return normalizeCharacterSpeechProfile(createDefaultCharacterSpeechProfile())
 }
 
 function normalizeProfile(profile?: Partial<CharacterStyleProfile> | null): CharacterStyleProfile {
-  return normalizeCharacterSpeechProfile(profile) as CharacterStyleProfile
+  return normalizeCharacterSpeechProfile(profile)
 }
 
 export function createProjectStyleSettings(

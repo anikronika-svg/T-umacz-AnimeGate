@@ -1282,7 +1282,7 @@ function LeftSidebar({
   )
 }
 
-function ProjectBar({
+export function ProjectBar({
   loadedFileName,
   loadedVideoName,
   onLoadVideo,
@@ -1618,7 +1618,7 @@ interface VideoPanelProps {
   onVideoError: () => void
 }
 
-function VideoPanel(props: VideoPanelProps): React.ReactElement {
+export function VideoPanel(props: VideoPanelProps): React.ReactElement {
   const {
     videoRef,
     collapsed,
@@ -3833,9 +3833,9 @@ export default function App(): React.ReactElement {
   const [videoCurrentTime, setVideoCurrentTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
   const [videoPaused, setVideoPaused] = useState(true)
-  const [videoVolume, setVideoVolume] = useState(1)
-  const [videoMuted, setVideoMuted] = useState(false)
-  const [videoPlaybackRate, setVideoPlaybackRate] = useState(1)
+  const [videoVolume, _setVideoVolume] = useState(1)
+  const [videoMuted, _setVideoMuted] = useState(false)
+  const [videoPlaybackRate, _setVideoPlaybackRate] = useState(1)
   const [videoError, setVideoError] = useState('')
   const [waveformData, setWaveformData] = useState<WaveformData | null>(null)
   const [waveformLoading, setWaveformLoading] = useState(false)
@@ -4090,10 +4090,10 @@ export default function App(): React.ReactElement {
         activeDiskProject.projectId,
         activeDiskProject.title,
       )
-      void window.electronAPI.saveProjectConfig({
+      void window.electronAPI?.saveProjectConfig({
         projectDir: activeDiskProject.projectDir,
         config: snapshot,
-      }).catch(error => {
+      })?.catch(error => {
         const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac konfiguracji projektu.'
         setProjectStepStatus(`BLAD autozapisu projektu: ${message}`)
       })
@@ -4114,7 +4114,6 @@ export default function App(): React.ReactElement {
   ])
 
   const videoSrc = videoPath ? toFileVideoUrl(videoPath) : null
-  const loadedVideoName = videoPath ? fileNameFromPath(videoPath) : 'Brak wideo'
   const lineTimings = useMemo(
     () => rowsData.map(row => ({ id: row.id, startSec: subtitleTimeToSeconds(row.start), endSec: subtitleTimeToSeconds(row.end) })),
     [rowsData],
@@ -4491,41 +4490,6 @@ export default function App(): React.ReactElement {
         ))
         : [...prev.projects, { id: currentProjectId, name: normalizedTitle, lastUpdated: new Date().toISOString().slice(0, 10) }],
     }))
-  }
-
-  const handleCreateSeriesProject = (): void => {
-    const title = window.prompt('Tytul projektu (jeden tytul anime):')?.trim()
-    if (!title) return
-    const suggestedId = sanitizeProjectId(title) || `project_${Date.now()}`
-    const enteredId = window.prompt('ID projektu (unikalny, bez spacji):', suggestedId)?.trim()
-    if (!enteredId) return
-    const projectId = sanitizeProjectId(enteredId)
-    if (!projectId) return
-    if (seriesProjects.some(project => project.id === projectId)) {
-      appendTranslationLog(`Projekt o ID ${projectId} juz istnieje.`)
-      return
-    }
-
-    const now = new Date().toISOString()
-    const meta: SeriesProjectMeta = {
-      id: projectId,
-      title,
-      anilistId: null,
-      preferredModelId: selectedModelId,
-      sourceLang,
-      targetLang,
-      lastUpdated: now,
-    }
-    setSeriesProjects(prev => [...prev, meta])
-    setMemoryStore(prev => (
-      prev.projects.some(project => project.id === projectId)
-        ? prev
-        : { ...prev, projects: [...prev.projects, { id: projectId, name: title, lastUpdated: now.slice(0, 10) }] }
-    ))
-    saveProjectStyleSettings(createProjectStyleSettings(projectId, BASE_PROJECT_CHARACTERS))
-    setProjectPickerId(projectId)
-    setCurrentProjectId(projectId)
-    appendTranslationLog(`Utworzono projekt serii: ${title} (${projectId}).`)
   }
 
   const buildDiskProjectConfig = (
@@ -6364,23 +6328,6 @@ export default function App(): React.ReactElement {
     })
     return unsubscribe
   }, [])
-
-  const handleVideoStop = (): void => {
-    const video = videoRef.current
-    if (!video) return
-    video.pause()
-    video.currentTime = 0
-    setVideoCurrentTime(0)
-    pauseAtAfterLineRef.current = null
-  }
-
-  const handleVideoSeekRelative = (delta: number): void => {
-    const video = videoRef.current
-    if (!video) return
-    const next = Math.max(0, Math.min(video.duration || 0, video.currentTime + delta))
-    video.currentTime = next
-    setVideoCurrentTime(next)
-  }
 
   const handleVideoSeekAbsolute = (nextTime: number): void => {
     const video = videoRef.current
