@@ -75,7 +75,12 @@ import {
 import { polishGrammarEngine } from './project/polishGrammarEngine'
 import { dialogueStyleEngine } from './project/dialogueStyleEngine'
 import { enforceProjectTerminology } from './project/terminologyEnforcer'
+import { guardLanguageLeaks } from './project/languageLeakGuard'
 import { validateTranslationQuality } from './project/translationQualityValidator'
+import { leakRepairEngine } from './project/leakRepairEngine'
+import { buildCharacterVoiceProfile } from './project/characterVoiceEngine'
+import { buildSceneToneSummary } from './project/sceneToneEngine'
+import { tuneSubtitleReadability } from './project/subtitleReadabilityTuner'
 import { buildDialogueContext } from './project/dialogueContextEngine'
 import { resolveTerminologyMatch, normalizeTerminologyKey } from './project/terminologyResolver'
 import { normalizeMemoryKey, resolveTranslationMemoryEntry } from './project/translationMemoryEngine'
@@ -227,6 +232,17 @@ interface DialogRow {
   sourceRaw: string
   target: string
   requiresManualCheck?: boolean
+  repairAttempted?: boolean
+  repairMode?: 'safe_replace' | 'controlled_retry' | 'skipped'
+  repairReason?: string
+  repairSucceeded?: boolean
+  characterVoiceApplied?: boolean
+  characterVoiceSource?: string
+  characterVoiceSummary?: string
+  sceneToneApplied?: boolean
+  sceneToneSummary?: string
+  readabilityTuned?: boolean
+  readabilityReason?: string
 }
 
 interface TranslationRequestContext {
@@ -264,6 +280,12 @@ interface TranslationRequestContext {
   chunkPreviousHint: string
   chunkNextHint: string
   speakerModeTag: string
+  repairPromptHint: string
+  characterVoiceSummary: string
+  characterVoiceSource: string
+  characterVoiceApplied: boolean
+  sceneToneSummary: string
+  sceneToneApplied: boolean
 }
 
 type TranslatorFn = (
@@ -277,6 +299,14 @@ type TranslatorFn = (
 interface TranslationAttemptResult {
   translated: string
   requiresManualCheck: boolean
+  repairMeta?: { repairAttempted: boolean; repairMode: 'safe_replace' | 'controlled_retry' | 'skipped'; repairReason: string; repairSucceeded: boolean }
+  characterVoiceApplied?: boolean
+  characterVoiceSource?: string
+  characterVoiceSummary?: string
+  sceneToneApplied?: boolean
+  sceneToneSummary?: string
+  readabilityTuned?: boolean
+  readabilityReason?: string
 }
 
 const DEFAULT_TRANSLATION_BATCH_SIZE = 20
@@ -4277,6 +4307,17 @@ export default function App(): React.ReactElement {
     const resolvedCharacterName = character?.name ?? row.character.trim() ?? 'Narrator'
     const effectiveStyle = resolveEffectiveStyle(styleSettings, resolvedCharacterName)
     const archetype = character?.profile.archetype ?? 'default'
+    const voiceProfile = buildCharacterVoiceProfile(character?.profile ?? createDefaultProfile(), {
+      speakerModeTag: identity.speaker.modeTagRaw,
+    })
+    const sceneTone = buildSceneToneSummary(
+      rowsDataRef.current.map(item => ({ source: item.source, sourceRaw: item.sourceRaw })),
+      Math.max(0, rowsDataRef.current.findIndex(item => item.id === row.id)),
+      {
+        speakerModeTag: identity.speaker.modeTagRaw,
+        characterVoiceSummary: voiceProfile.summary,
+      },
+    )
     const normalizedTypeSelection = normalizeCharacterTypeSelection(
       character?.profile.characterTypeId || mapLegacyArchetypeToCharacterType(archetype).typeId,
       character?.profile.characterSubtypeId || mapLegacyArchetypeToCharacterType(archetype).subtypeId,
@@ -4320,6 +4361,12 @@ export default function App(): React.ReactElement {
       chunkPreviousHint: '',
       chunkNextHint: '',
       speakerModeTag: identity.speaker.modeTagRaw,
+      repairPromptHint: '',
+      characterVoiceSummary: voiceProfile.summary,
+      characterVoiceSource: voiceProfile.source,
+      characterVoiceApplied: voiceProfile.applied,
+      sceneToneSummary: sceneTone.summary,
+      sceneToneApplied: sceneTone.applied,
     }
   }
 
@@ -5418,9 +5465,13 @@ export default function App(): React.ReactElement {
     context?.termHints?.length ? `Terminology constraints (source -> target): ${context.termHints.join('; ')}` : '',
     context?.chunkPreviousHint ? `Current chunk previous semantic hint: ${context.chunkPreviousHint}` : '',
     context?.chunkNextHint ? `Current chunk next semantic hint: ${context.chunkNextHint}` : '',
+    context?.characterVoiceApplied ? `Character voice: ${context.characterVoiceSummary}` : '',
+    context?.characterVoiceSource ? `Voice source: ${context.characterVoiceSource}` : '',
+    context?.sceneToneApplied ? `Scene tone: ${context.sceneToneSummary}` : '',
     context?.isShortUtterance
       ? 'Short utterance guard: keep wording concise and close to the source intent. Do not over-expand short lines.'
       : '',
+    context?.repairPromptHint ? `Repair hint: ${context.repairPromptHint}` : '',
     'Anti-hallucination: use context only to resolve continuity and tone. Do not add new facts, names, actions, or explanations absent from the line.',
     (context?.speakingTraits || context?.characterNote) ? 'Manual character fields have highest priority over type/subtype suggestions.' : '',
     context?.speakingTraits ? `Additional speaking traits: ${context.speakingTraits}` : '',
@@ -5771,6 +5822,103 @@ export default function App(): React.ReactElement {
     return parts.join('')
   }
 
+  const postProcessTranslation = (
+    row: DialogRow,
+    translated: string,
+    context: TranslationRequestContext,
+  ): { translated: string; leakGuard: ReturnType<typeof guardLanguageLeaks>; quality: ReturnType<typeof validateTranslationQuality> } => {
+    let next = translated
+    next = applyTranslationStyleLocally(next, targetLang, context)
+    if (context.gender !== 'Unknown') {
+      next = applyGenderCorrectionLocally(next, context.gender)
+    }
+    next = enforceTermHints(next, extractTermHints(row.sourceRaw || row.source))
+    next = polishGrammarEngine(next)
+    next = dialogueStyleEngine(next)
+    next = enforceProjectTerminology(next, projectTerms)
+    const leakGuard = guardLanguageLeaks(next, { terms: projectTerms })
+    next = leakGuard.value
+    next = stabilizeTonePunctuation(row.sourceRaw || row.source, next)
+    const quality = validateTranslationQuality(row.sourceRaw || row.source, next, { terms: projectTerms })
+    return { translated: next, leakGuard, quality }
+  }
+
+  const runLeakRepair = async (
+    row: DialogRow,
+    translated: string,
+    context: TranslationRequestContext,
+    leakGuard: ReturnType<typeof guardLanguageLeaks>,
+    quality: ReturnType<typeof validateTranslationQuality>,
+  ): Promise<{ translated: string; requiresManualCheck: boolean; repairMeta?: ReturnType<typeof leakRepairEngine>['metadata'] }> => {
+    const baseRequiresManual = leakGuard.requiresManualCheck || quality.requiresManualCheck
+    if (!baseRequiresManual) {
+      return { translated, requiresManualCheck: false }
+    }
+
+    const repairResult = await leakRepairEngine({
+      sourceRawOrPlain: row.sourceRaw || row.source,
+      target: translated,
+      issues: quality.issues,
+      leakDetection: leakGuard.detection,
+      terms: projectTerms,
+      glossary: glossaryForClassifier,
+      postProcess: value => {
+        const processed = postProcessTranslation(row, value, context)
+        return {
+          value: processed.translated,
+          issues: processed.quality.issues,
+          leakDetection: processed.leakGuard.detection,
+          requiresManualCheck: processed.quality.requiresManualCheck || processed.leakGuard.requiresManualCheck,
+        }
+      },
+      retryTranslate: async repairPromptHint => {
+        if (stopTranslationRef.current) {
+          return {
+            value: translated,
+            issues: quality.issues,
+            leakDetection: leakGuard.detection,
+            requiresManualCheck: true,
+          }
+        }
+        const controller = new AbortController()
+        const retryContext = { ...context, repairPromptHint }
+        const textForTranslation = row.sourceRaw || row.source
+        const retried = await translateSubtitleLinePreservingTags(
+          textForTranslation,
+          sourceLang,
+          targetLang,
+          controller.signal,
+          retryContext,
+        )
+        const processed = postProcessTranslation(row, retried, retryContext)
+        return {
+          value: processed.translated,
+          issues: processed.quality.issues,
+          leakDetection: processed.leakGuard.detection,
+          requiresManualCheck: processed.quality.requiresManualCheck || processed.leakGuard.requiresManualCheck,
+        }
+      },
+    })
+
+    return {
+      translated: repairResult.value,
+      requiresManualCheck: repairResult.requiresManualCheck,
+      repairMeta: repairResult.metadata,
+    }
+  }
+
+  const runReadabilityTuner = (
+    row: DialogRow,
+    translated: string,
+    requiresManualCheck: boolean,
+  ): { translated: string; tuned: boolean; reason: string } => {
+    if (requiresManualCheck) {
+      return { translated, tuned: false, reason: 'blocked-by-flag' }
+    }
+    const tuned = tuneSubtitleReadability(translated, { allow: true })
+    return { translated: tuned.value, tuned: tuned.tuned, reason: tuned.reason }
+  }
+
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
     const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
     if (termMatch && mode === 'primary') {
@@ -5904,22 +6052,20 @@ export default function App(): React.ReactElement {
     if (!translated) {
       throw new Error(`Brak odpowiedzi silnika (${sourceLang}->${targetLang})`)
     }
-    translated = applyTranslationStyleLocally(translated, targetLang, context)
-    if (context.gender !== 'Unknown') {
-      translated = applyGenderCorrectionLocally(translated, context.gender)
-    }
-    translated = enforceTermHints(translated, extractTermHints(row.sourceRaw || row.source))
-    translated = polishGrammarEngine(translated)
-    translated = dialogueStyleEngine(translated)
-    translated = enforceProjectTerminology(translated, projectTerms)
-    translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
+    const postProcessed = postProcessTranslation(row, translated, context)
+    translated = postProcessed.translated
+    const leakGuard = postProcessed.leakGuard
+    const quality = postProcessed.quality
     const shortLineAggressive = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
     let requiresManualCheck = shortLineAggressive
     if (shouldWarnFromClassifier) {
       requiresManualCheck = true
       appendTranslationLog(`Linia ${row.id}: niepewna klasyfikacja (mozliwy termin specjalny) — oznaczono do recznego sprawdzenia.`)
     }
-    const quality = validateTranslationQuality(row.sourceRaw || row.source, translated, { terms: projectTerms })
+    if (leakGuard.requiresManualCheck) {
+      requiresManualCheck = true
+      appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
+    }
     if (quality.requiresManualCheck) {
       requiresManualCheck = true
       appendTranslationLog(`Linia ${row.id}: walidacja jakosci (${Math.round(quality.confidence * 100)}%) — oznaczono do sprawdzenia.`)
@@ -5927,10 +6073,27 @@ export default function App(): React.ReactElement {
     if (shortLineAggressive) {
       appendTranslationLog(`Linia ${row.id}: zbyt agresywne przepisanie krótkiej kwestii — oznaczono do ręcznego sprawdzenia.`)
     }
+    const repairOutcome = await runLeakRepair(row, translated, context, leakGuard, quality)
+    translated = repairOutcome.translated
+    requiresManualCheck = repairOutcome.requiresManualCheck
+    const repairMeta = repairOutcome.repairMeta
+    const readability = runReadabilityTuner(row, translated, requiresManualCheck)
+    translated = readability.translated
     if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
       appendTranslationLog(`Linia ${row.id}: wynik podejrzany (identyczny z oryginalem, ${sourceLang}->${targetLang})`)
     }
-    return { translated, requiresManualCheck }
+    return {
+      translated,
+      requiresManualCheck,
+      repairMeta,
+      characterVoiceApplied: context.characterVoiceApplied,
+      characterVoiceSource: context.characterVoiceSource,
+      characterVoiceSummary: context.characterVoiceSummary,
+      sceneToneApplied: context.sceneToneApplied,
+      sceneToneSummary: context.sceneToneSummary,
+      readabilityTuned: readability.tuned,
+      readabilityReason: readability.reason,
+    }
   }
 
   const testProviderConnection = async (provider: string): Promise<string> => {
@@ -6131,27 +6294,47 @@ export default function App(): React.ReactElement {
             if (translatedBatch && translatedBatch.length === toTranslate.length) {
               const byId = new Map<number, string>()
               const qualityById = new Map<number, boolean>()
-              toTranslate.forEach((row, index) => {
+              const repairMetaById = new Map<number, { repairAttempted: boolean; repairMode: 'safe_replace' | 'controlled_retry' | 'skipped'; repairReason: string; repairSucceeded: boolean }>()
+              const voiceMetaById = new Map<number, { characterVoiceApplied: boolean; characterVoiceSource: string; characterVoiceSummary: string; sceneToneApplied: boolean; sceneToneSummary: string }>()
+              const readabilityMetaById = new Map<number, { readabilityTuned: boolean; readabilityReason: string }>()
+              for (let index = 0; index < toTranslate.length; index += 1) {
+                const row = toTranslate[index]
                 let translated = translatedBatch?.[index] ?? ''
                 const context = getTranslationContextForRow(row)
-                translated = applyTranslationStyleLocally(translated, targetLang, context)
-                if (context.gender !== 'Unknown') translated = applyGenderCorrectionLocally(translated, context.gender)
-                translated = enforceTermHints(translated, extractTermHints(row.sourceRaw || row.source))
-                translated = polishGrammarEngine(translated)
-                translated = dialogueStyleEngine(translated)
-                translated = enforceProjectTerminology(translated, projectTerms)
-                translated = stabilizeTonePunctuation(row.sourceRaw || row.source, translated)
-                const quality = validateTranslationQuality(row.sourceRaw || row.source, translated, { terms: projectTerms })
+                const postProcessed = postProcessTranslation(row, translated, context)
+                translated = postProcessed.translated
+                const leakGuard = postProcessed.leakGuard
+                const quality = postProcessed.quality
                 if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
                   appendTranslationLog(`Linia ${row.id}: wynik podejrzany (batch, ${sourceLang}->${targetLang})`)
                 }
                 byId.set(row.id, translated)
-                qualityById.set(row.id, quality.requiresManualCheck)
+                if (leakGuard.requiresManualCheck) {
+                  appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
+                }
                 if (quality.requiresManualCheck) {
                   appendTranslationLog(`Linia ${row.id}: walidacja jakosci (${Math.round(quality.confidence * 100)}%) — oznaczono do sprawdzenia.`)
                 }
+                const repairOutcome = await runLeakRepair(row, translated, context, leakGuard, quality)
+                translated = repairOutcome.translated
+                byId.set(row.id, translated)
+                qualityById.set(row.id, repairOutcome.requiresManualCheck)
+                if (repairOutcome.repairMeta) {
+                  repairMetaById.set(row.id, repairOutcome.repairMeta)
+                }
+                const readability = runReadabilityTuner(row, translated, repairOutcome.requiresManualCheck)
+                translated = readability.translated
+                byId.set(row.id, translated)
+                readabilityMetaById.set(row.id, { readabilityTuned: readability.tuned, readabilityReason: readability.reason })
+                voiceMetaById.set(row.id, {
+                  characterVoiceApplied: context.characterVoiceApplied,
+                  characterVoiceSource: context.characterVoiceSource,
+                  characterVoiceSummary: context.characterVoiceSummary,
+                  sceneToneApplied: context.sceneToneApplied,
+                  sceneToneSummary: context.sceneToneSummary,
+                })
                 recordResult(row.id, 'done')
-              })
+              }
               setRowsData(prev => prev.map(item => (
                 byId.has(item.id)
                   ? {
@@ -6159,6 +6342,17 @@ export default function App(): React.ReactElement {
                     target: byId.get(item.id) as string,
                     pl: 'done',
                     requiresManualCheck: qualityById.get(item.id) ?? false,
+                    repairAttempted: repairMetaById.get(item.id)?.repairAttempted ?? false,
+                    repairMode: repairMetaById.get(item.id)?.repairMode,
+                    repairReason: repairMetaById.get(item.id)?.repairReason,
+                    repairSucceeded: repairMetaById.get(item.id)?.repairSucceeded,
+                    characterVoiceApplied: voiceMetaById.get(item.id)?.characterVoiceApplied ?? false,
+                    characterVoiceSource: voiceMetaById.get(item.id)?.characterVoiceSource,
+                    characterVoiceSummary: voiceMetaById.get(item.id)?.characterVoiceSummary,
+                    sceneToneApplied: voiceMetaById.get(item.id)?.sceneToneApplied ?? false,
+                    sceneToneSummary: voiceMetaById.get(item.id)?.sceneToneSummary,
+                    readabilityTuned: readabilityMetaById.get(item.id)?.readabilityTuned ?? false,
+                    readabilityReason: readabilityMetaById.get(item.id)?.readabilityReason,
                   }
                   : item
               )))
@@ -6189,6 +6383,17 @@ export default function App(): React.ReactElement {
                   target: result.translated,
                   pl: result.requiresManualCheck ? 'draft' : 'done',
                   requiresManualCheck: result.requiresManualCheck,
+                  repairAttempted: result.repairMeta?.repairAttempted ?? false,
+                  repairMode: result.repairMeta?.repairMode,
+                  repairReason: result.repairMeta?.repairReason,
+                  repairSucceeded: result.repairMeta?.repairSucceeded,
+                  characterVoiceApplied: result.characterVoiceApplied ?? false,
+                  characterVoiceSource: result.characterVoiceSource,
+                  characterVoiceSummary: result.characterVoiceSummary,
+                  sceneToneApplied: result.sceneToneApplied ?? false,
+                  sceneToneSummary: result.sceneToneSummary,
+                  readabilityTuned: result.readabilityTuned ?? false,
+                  readabilityReason: result.readabilityReason,
                 }
                 : item
             )))
@@ -6251,6 +6456,17 @@ export default function App(): React.ReactElement {
                   target: result.translated,
                   pl: result.requiresManualCheck ? 'draft' : 'done',
                   requiresManualCheck: result.requiresManualCheck,
+                  repairAttempted: result.repairMeta?.repairAttempted ?? false,
+                  repairMode: result.repairMeta?.repairMode,
+                  repairReason: result.repairMeta?.repairReason,
+                  repairSucceeded: result.repairMeta?.repairSucceeded,
+                  characterVoiceApplied: result.characterVoiceApplied ?? false,
+                  characterVoiceSource: result.characterVoiceSource,
+                  characterVoiceSummary: result.characterVoiceSummary,
+                  sceneToneApplied: result.sceneToneApplied ?? false,
+                  sceneToneSummary: result.sceneToneSummary,
+                  readabilityTuned: result.readabilityTuned ?? false,
+                  readabilityReason: result.readabilityReason,
                 }
                 : item
             )))
@@ -6265,16 +6481,27 @@ export default function App(): React.ReactElement {
             try {
               const result = await translateSingleRow(row, 'fallback')
               recordResult(lineId, 'done')
-              setRowsData(prev => prev.map(item => (
-                item.id === lineId
-                  ? {
-                    ...item,
-                    target: result.translated,
-                    pl: result.requiresManualCheck ? 'draft' : 'done',
-                    requiresManualCheck: result.requiresManualCheck,
-                  }
-                  : item
-              )))
+            setRowsData(prev => prev.map(item => (
+              item.id === lineId
+                ? {
+                  ...item,
+                  target: result.translated,
+                  pl: result.requiresManualCheck ? 'draft' : 'done',
+                  requiresManualCheck: result.requiresManualCheck,
+                  repairAttempted: result.repairMeta?.repairAttempted ?? false,
+                  repairMode: result.repairMeta?.repairMode,
+                  repairReason: result.repairMeta?.repairReason,
+                  repairSucceeded: result.repairMeta?.repairSucceeded,
+                  characterVoiceApplied: result.characterVoiceApplied ?? false,
+                  characterVoiceSource: result.characterVoiceSource,
+                  characterVoiceSummary: result.characterVoiceSummary,
+                  sceneToneApplied: result.sceneToneApplied ?? false,
+                  sceneToneSummary: result.sceneToneSummary,
+                  readabilityTuned: result.readabilityTuned ?? false,
+                  readabilityReason: result.readabilityReason,
+                }
+                : item
+            )))
             } catch (fallbackError) {
               if (fallbackError instanceof ProviderError && fallbackError.code === 'cancelled') {
                 recordResult(lineId, 'cancelled', fallbackError.message)
@@ -7038,3 +7265,7 @@ export default function App(): React.ReactElement {
     </div>
   )
 }
+    if (leakGuard.requiresManualCheck) {
+      requiresManualCheck = true
+      appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
+    }

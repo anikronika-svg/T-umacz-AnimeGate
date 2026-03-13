@@ -1,9 +1,11 @@
 import { stripAssFormattingForTranslation } from './assTranslationPreprocessor'
 import { normalizeSemanticWhitespace } from './subtitleTextSanitizer'
+import { detectLanguageLeak } from './languageLeakGuard'
 import { enforceProjectTerminology } from './terminologyEnforcer'
 
 export type TranslationQualityIssueType =
-  | 'untranslated-fragment'
+  | 'english-leak'
+  | 'mixed-language'
   | 'terminology-inconsistent'
   | 'grammar-anomaly'
   | 'repetition'
@@ -62,8 +64,16 @@ export function validateTranslationQuality(
   const englishFragments = findEnglishFragments(semantic).filter(word => !sourceEnglish.includes(word.toLocaleLowerCase()))
   if (englishFragments.length > 0) {
     issues.push({
-      type: 'untranslated-fragment',
+      type: 'english-leak',
       message: `Wykryto nieprzetlumaczone fragmenty: ${englishFragments.slice(0, 3).join(', ')}`,
+    })
+  }
+
+  const leakDetection = detectLanguageLeak(translated, { terms: options?.terms })
+  if (leakDetection.mixed) {
+    issues.push({
+      type: 'mixed-language',
+      message: 'Wykryto mieszany angielsko-polski output.',
     })
   }
 
@@ -89,8 +99,11 @@ export function validateTranslationQuality(
   let confidence = 1
   issues.forEach(issue => {
     switch (issue.type) {
-      case 'untranslated-fragment':
+      case 'english-leak':
         confidence -= 0.3
+        break
+      case 'mixed-language':
+        confidence -= 0.35
         break
       case 'terminology-inconsistent':
         confidence -= 0.25
@@ -108,7 +121,7 @@ export function validateTranslationQuality(
   })
   confidence = Math.max(0, Math.min(1, confidence))
 
-  const requiresManualCheck = confidence < 0.7 || issues.some(issue => issue.type === 'untranslated-fragment')
+  const requiresManualCheck = confidence < 0.7 || issues.some(issue => issue.type === 'english-leak' || issue.type === 'mixed-language')
 
   return { requiresManualCheck, confidence, issues }
 }

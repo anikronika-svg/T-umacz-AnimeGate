@@ -5,7 +5,7 @@ describe('translationQualityValidator', () => {
   it('flags untranslated english fragments', () => {
     const result = validateTranslationQuality('Hello', 'Master!', {})
     expect(result.requiresManualCheck).toBe(true)
-    expect(result.issues.some(issue => issue.type === 'untranslated-fragment')).toBe(true)
+    expect(result.issues.some(issue => issue.type === 'english-leak')).toBe(true)
   })
 
   it('flags terminology inconsistencies', () => {
@@ -13,6 +13,13 @@ describe('translationQualityValidator', () => {
       terms: { relics: 'relikty' },
     })
     expect(result.issues.some(issue => issue.type === 'terminology-inconsistent')).toBe(true)
+  })
+
+  it('flags mixed language output', () => {
+    const result = validateTranslationQuality('Find the relics.', 'Find the relikty.', {
+      terms: { relics: 'relikty' },
+    })
+    expect(result.issues.some(issue => issue.type === 'mixed-language')).toBe(true)
   })
 
   it('detects repetition and grammar anomalies', () => {
