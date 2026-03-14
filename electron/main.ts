@@ -109,6 +109,16 @@ interface ProjectTextFileArgs {
   content?: string
 }
 
+interface UserDataTextFileArgs {
+  relativePath: string
+  content?: string
+}
+
+interface ListAssFilesArgs {
+  dir: string
+  recursive?: boolean
+}
+
 const STARTUP_LOG_FILE = 'startup.log'
 
 type StartupLogLevel = 'INFO' | 'WARN' | 'ERROR'
@@ -147,6 +157,10 @@ const API_ALLOWED_SUFFIXES = [
 ]
 
 const API_ALLOWED_METHODS = new Set(['GET', 'POST'])
+const USER_DATA_ALLOWED_FILES = new Set([
+  'translation_memory_db.json',
+  'dialogue_patterns.json',
+])
 
 function normalizeFsPath(value: string): string {
   const resolved = path.resolve(value)
@@ -179,6 +193,39 @@ function resolveProjectFilePath(projectDir: string, relativePath: string): strin
   const resolved = path.resolve(projectDir, relativePath)
   if (!isPathWithinRoot(projectDir, resolved)) throw new Error('Nieprawidlowa sciezka pliku projektu.')
   return resolved
+}
+
+function resolveUserDataFilePath(relativePath: string): string {
+  if (!relativePath) throw new Error('Brak sciezki pliku userData.')
+  const userDataPath = app.getPath('userData')
+  const normalized = relativePath.replace(/\\/g, '/')
+  if (USER_DATA_ALLOWED_FILES.has(normalized)) {
+    return path.resolve(userDataPath, normalized)
+  }
+  if (normalized.startsWith('import_reports/') && normalized.endsWith('.json')) {
+    return path.resolve(userDataPath, normalized)
+  }
+  throw new Error('Plik userData nie jest dozwolony.')
+}
+
+async function listAssFilesInDir(dirPath: string, recursive: boolean, rootPath: string): Promise<string[]> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true })
+  const files: string[] = []
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name)
+    if (!isPathWithinRoot(rootPath, fullPath)) continue
+    if (entry.isDirectory()) {
+      if (recursive) {
+        const nested = await listAssFilesInDir(fullPath, true, rootPath)
+        files.push(...nested)
+      }
+      continue
+    }
+    if (entry.isFile() && /\.ass$/i.test(entry.name)) {
+      files.push(fullPath)
+    }
+  }
+  return files
 }
 
 function isPrivateIpv4(host: string): boolean {
@@ -1186,10 +1233,49 @@ function setupFileIpc(): void {
   ipcMain.handle('project:writeTextFile', async (_event, args: ProjectTextFileArgs) => {
     try {
       const filePath = resolveProjectFilePath(args.projectDir, args.relativePath)
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
       await fs.writeFile(filePath, args.content ?? '', 'utf-8')
       return { ok: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac pliku projektu.'
+      return { ok: false, error: message }
+    }
+  })
+
+  ipcMain.handle('project:listAssFiles', async (_event, args: ListAssFilesArgs) => {
+    try {
+      if (!args?.dir) return { ok: false, error: 'Brak katalogu.' }
+      if (!isApprovedPath(args.dir)) return { ok: false, error: 'Brak dostepu do katalogu (niezatwierdzony).' }
+      const normalizedDir = path.resolve(args.dir)
+      const files = await listAssFilesInDir(normalizedDir, Boolean(args.recursive), normalizedDir)
+      return { ok: true, files }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nie udalo sie odczytac katalogu.'
+      return { ok: false, error: message }
+    }
+  })
+
+  ipcMain.handle('app:readUserDataFile', async (_event, args: UserDataTextFileArgs) => {
+    try {
+      const filePath = resolveUserDataFilePath(args.relativePath)
+      const content = await fs.readFile(filePath, 'utf-8')
+      return { ok: true, content }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (code === 'ENOENT') return { ok: false, error: 'not-found' }
+      const message = error instanceof Error ? error.message : 'Nie udalo sie odczytac pliku userData.'
+      return { ok: false, error: message }
+    }
+  })
+
+  ipcMain.handle('app:writeUserDataFile', async (_event, args: UserDataTextFileArgs) => {
+    try {
+      const filePath = resolveUserDataFilePath(args.relativePath)
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(filePath, args.content ?? '', 'utf-8')
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac pliku userData.'
       return { ok: false, error: message }
     }
   })

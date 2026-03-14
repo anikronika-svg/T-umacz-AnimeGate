@@ -83,7 +83,15 @@ import { buildSceneToneSummary } from './project/sceneToneEngine'
 import { tuneSubtitleReadability } from './project/subtitleReadabilityTuner'
 import { buildDialogueContext } from './project/dialogueContextEngine'
 import { resolveTerminologyMatch, normalizeTerminologyKey } from './project/terminologyResolver'
-import { normalizeMemoryKey, resolveTranslationMemoryEntry } from './project/translationMemoryEngine'
+import { normalizeMemoryKey, resolveTranslationMemoryWithPriority } from './project/translationMemoryEngine'
+import { importTranslationMemoryFromAssPair } from './project/translationMemoryImporter'
+import {
+  buildDialoguePatternsFromEntries,
+  mergeDatasetEntries,
+  normalizeDatasetText,
+  type DialoguePatternEntry,
+  type TranslationMemoryDatasetEntry,
+} from './project/translationMemoryDataset'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -333,7 +341,7 @@ const BASE_PROJECT_CHARACTERS: Omit<CharacterStyleAssignment, 'style' | 'profile
   { id: 12, name: 'Kaina Nosu', gender: 'Female', avatarColor: '#cc7a8f' },
 ]
 
-type MemoryTab = 'browse' | 'glossary' | 'projects'
+type MemoryTab = 'browse' | 'glossary' | 'projects' | 'import'
 
 interface MemoryEntry {
   id: number
@@ -344,6 +352,7 @@ interface MemoryEntry {
   createdAt: string
   usageCount: number
   note?: string
+  sourceQuality?: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'machine_generated_analysis_only'
 }
 
 interface SuggestionViewModel {
@@ -380,6 +389,35 @@ interface MemoryStore {
   glossary: GlossaryEntry[]
 }
 
+type BatchImportStatus = 'paired' | 'missing-translation' | 'missing-source' | 'invalid-naming' | 'needs-manual-confirm'
+
+interface BatchImportFileInfo {
+  filePath: string
+  fileName: string
+  lang: string
+  baseTitle: string
+  episode: string
+  valid: boolean
+  confidence?: 'confident' | 'needs-confirm'
+  rawBase?: string
+  rawEpisode?: string
+  reason?: string
+}
+
+interface BatchImportPairInfo {
+  baseTitle: string
+  episode: string
+  sourceLang?: string
+  targetLang?: string
+  sourceFile?: BatchImportFileInfo
+  targetFile?: BatchImportFileInfo
+  status: BatchImportStatus
+  issues?: string[]
+  manualKey?: string
+  sourceCandidates?: BatchImportFileInfo[]
+  targetCandidates?: BatchImportFileInfo[]
+}
+
 type CorrectionEngineMode = 'local' | 'ai'
 
 interface CorrectionCandidate {
@@ -404,10 +442,10 @@ const INITIAL_MEMORY: MemoryStore = {
     { id: 'Global', name: 'Global (fallback)', lastUpdated: '2026-02-27' },
   ],
   entries: [
-    { id: 1, source: 'ちょっと待って！どこへ行くの？', target: 'Poczekaj chwilę! Dokąd idziesz?', character: 'Haruto', projectId: 'AnimeGate_EP01', createdAt: '2026-03-09', usageCount: 7 },
-    { id: 2, source: 'これは夢じゃないよ。本当のことだ。', target: 'To nie jest sen. To prawda.', character: 'Yuki', projectId: 'AnimeGate_EP01', createdAt: '2026-03-08', usageCount: 4 },
-    { id: 3, source: '一緒に行こう！', target: 'Chodźmy razem!', character: 'Haruto', projectId: 'AnimeGate_EP01', createdAt: '2026-03-08', usageCount: 3 },
-    { id: 4, source: 'Master.', target: 'Mistrz.', character: 'Tino', projectId: 'AnimeGate_EP02', createdAt: '2026-03-02', usageCount: 2 },
+    { id: 1, source: 'ちょっと待って！どこへ行くの？', target: 'Poczekaj chwilę! Dokąd idziesz?', character: 'Haruto', projectId: 'AnimeGate_EP01', createdAt: '2026-03-09', usageCount: 7, sourceQuality: 'project_runtime_memory' },
+    { id: 2, source: 'これは夢じゃないよ。本当のことだ。', target: 'To nie jest sen. To prawda.', character: 'Yuki', projectId: 'AnimeGate_EP01', createdAt: '2026-03-08', usageCount: 4, sourceQuality: 'project_runtime_memory' },
+    { id: 3, source: '一緒に行こう！', target: 'Chodźmy razem!', character: 'Haruto', projectId: 'AnimeGate_EP01', createdAt: '2026-03-08', usageCount: 3, sourceQuality: 'project_runtime_memory' },
+    { id: 4, source: 'Master.', target: 'Mistrz.', character: 'Tino', projectId: 'AnimeGate_EP02', createdAt: '2026-03-02', usageCount: 2, sourceQuality: 'project_runtime_memory' },
   ],
   glossary: [
     { id: 1, source: 'merchant', preferred: 'kupiec', alternatives: 'sprzedawca|handlarz', note: 'używaj kupiec w świecie fantasy', projectId: 'AnimeGate_EP01', active: true },
@@ -1097,6 +1135,7 @@ interface ActionBarProps {
   onOpenCharacters: () => void
   onOpenMemory: () => void
   onOpenGenderCorrection: () => void
+  onOpenBatchImport: () => void
   onTranslateAll: () => void
   onTranslateSelected: () => void
   onStopTranslate: () => void
@@ -1117,6 +1156,7 @@ function ActionBar({
   onTranslateAll,
   onTranslateSelected,
   onStopTranslate,
+  onOpenBatchImport,
   isTranslating,
   selectedCount,
   sourceLang,
@@ -1182,6 +1222,9 @@ function ActionBar({
         disabled={!isTranslating}
       >
         Stop
+      </button>
+      <button style={BASE_BTN} onClick={onOpenBatchImport}>
+        Import bazy z folderu
       </button>
     </div>
   )
@@ -1345,6 +1388,7 @@ export function ProjectBar({
   onCreateProject,
   onLoadProject,
   onOpenProjectStep,
+  onOpenMemoryImport,
   activeDiskProjectTitle,
 }: {
   loadedFileName: string
@@ -1356,6 +1400,7 @@ export function ProjectBar({
   onCreateProject: () => void
   onLoadProject: () => void
   onOpenProjectStep: () => void
+  onOpenMemoryImport: () => void
   activeDiskProjectTitle: string
 }): React.ReactElement {
   return (
@@ -1373,7 +1418,13 @@ export function ProjectBar({
       <button style={BASE_BTN} onClick={onCreateProject}>+ Nowy projekt</button>
       <button style={BASE_BTN} onClick={onLoadProject}>Wczytaj projekt</button>
       <button style={{ ...BASE_BTN, borderColor: '#2b8bd8', color: C.accent }} onClick={onOpenProjectStep}>Krok 0: Projekt</button>
-      <button style={{ ...BASE_BTN, opacity: 0.4, cursor: 'not-allowed' }} disabled title="Funkcja w przygotowaniu">Importuj .ass do TM</button>
+      <button
+        style={BASE_BTN}
+        onClick={onOpenMemoryImport}
+        title="Importuj baze tlumaczen z ASS"
+      >
+        Importuj .ass do TM
+      </button>
       <button style={BASE_BTN} onClick={onLoadVideo}>Zaladuj wideo</button>
       <button style={{ ...BASE_BTN, opacity: 0.4, cursor: 'not-allowed' }} disabled title="Funkcja w przygotowaniu">Analizuj styl</button>
       <span style={{ marginLeft: 10, fontSize: 11, color: C.accentY }}>Aktywny projekt dyskowy: {activeDiskProjectTitle}</span>
@@ -1505,9 +1556,11 @@ function UpdateStatusBar({
 function EditorPanel({
   row,
   onChangeTarget,
+  onAddReviewed,
 }: {
   row: DialogRow | undefined
   onChangeTarget: (lineId: number, target: string) => void
+  onAddReviewed: (row: DialogRow) => void
 }): React.ReactElement {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: 126, borderTop: `1px solid ${C.border}` }}>
@@ -1527,6 +1580,11 @@ function EditorPanel({
             style={{ flex: 1, background: '#30323a', border: `1px solid #1f99d9`, color: C.text, padding: 8, resize: 'none' }}
           />
         </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '6px 8px', borderTop: `1px solid ${C.border}` }}>
+        <button style={BASE_BTN} onClick={() => { if (row) onAddReviewed(row) }} disabled={!row || !row.target.trim()}>
+          Dodaj zaznaczona linie do reviewed
+        </button>
       </div>
 
     </div>
@@ -2017,26 +2075,76 @@ function WaveformPanel({
 interface MemoryModalProps {
   open: boolean
   currentProjectId: string
+  initialTab: MemoryTab
   store: MemoryStore
+  hasActiveDiskProject: boolean
+  projectImportedCount: number
+  globalImportedCount: number
+  reviewedCount: number
+  dialoguePatternCount: number
   onClose: () => void
   onChange: (next: MemoryStore) => void
+  onImportDataset: (args: {
+    sourceFile: File
+    targetFile: File
+    scope: 'project' | 'global'
+    series?: string
+    episode?: string
+    groupName?: string
+    qualityTag?: 'trusted' | 'low-confidence'
+  }) => Promise<ReturnType<typeof importTranslationMemoryFromAssPair>>
+  onExportGlobalDataset: () => void
+  onImportGlobalDataset: (file: File, mode: 'replace' | 'merge') => Promise<void>
+  onExportReviewedMemory: () => void
+  onImportReviewedMemory: (file: File, mode: 'replace' | 'merge') => Promise<void>
 }
 
-function MemoryModal({ open, currentProjectId, store, onClose, onChange }: MemoryModalProps): React.ReactElement | null {
+function MemoryModal({
+  open,
+  currentProjectId,
+  initialTab,
+  store,
+  hasActiveDiskProject,
+  projectImportedCount,
+  globalImportedCount,
+  reviewedCount,
+  dialoguePatternCount,
+  onClose,
+  onChange,
+  onImportDataset,
+  onExportGlobalDataset,
+  onImportGlobalDataset,
+  onExportReviewedMemory,
+  onImportReviewedMemory,
+}: MemoryModalProps): React.ReactElement | null {
   const [tab, setTab] = useState<MemoryTab>('browse')
   const [selectedProjectId, setSelectedProjectId] = useState(currentProjectId)
   const [query, setQuery] = useState('')
   const [selectedEntryId, setSelectedEntryId] = useState<number | null>(null)
   const [selectedGlossaryFile, setSelectedGlossaryFile] = useState<File | null>(null)
   const [glossaryDraft, setGlossaryDraft] = useState({ source: '', preferred: '', alternatives: '', note: '' })
+  const [datasetSourceFile, setDatasetSourceFile] = useState<File | null>(null)
+  const [datasetTargetFile, setDatasetTargetFile] = useState<File | null>(null)
+  const [datasetSeries, setDatasetSeries] = useState('')
+  const [datasetEpisode, setDatasetEpisode] = useState('')
+  const [datasetGroup, setDatasetGroup] = useState('')
+  const [datasetQuality, setDatasetQuality] = useState<'trusted' | 'low-confidence'>('trusted')
+  const [datasetScope, setDatasetScope] = useState<'project' | 'global'>('project')
+  const [datasetSourceQuality, setDatasetSourceQuality] = useState<'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'machine_generated_analysis_only'>('machine_generated_analysis_only')
+  const [datasetStatus, setDatasetStatus] = useState('')
+  const [datasetBusy, setDatasetBusy] = useState(false)
 
   useEffect(() => {
     if (open) {
       setSelectedProjectId(currentProjectId)
-      setTab('browse')
+      setTab(initialTab)
       setQuery('')
       setSelectedEntryId(null)
       setSelectedGlossaryFile(null)
+      setDatasetSourceFile(null)
+      setDatasetTargetFile(null)
+      setDatasetStatus('')
+      setDatasetBusy(false)
     }
   }, [open, currentProjectId])
 
@@ -2159,6 +2267,58 @@ function MemoryModal({ open, currentProjectId, store, onClose, onChange }: Memor
     })
   }
 
+  const runDatasetImport = async (): Promise<void> => {
+    if (!datasetSourceFile || !datasetTargetFile) {
+      setDatasetStatus('Wybierz pliki EN i PL.')
+      return
+    }
+    if (datasetScope === 'project' && !hasActiveDiskProject) {
+      setDatasetStatus('Brak aktywnego projektu dyskowego.')
+      return
+    }
+    setDatasetBusy(true)
+    setDatasetStatus('Import w toku...')
+    try {
+      const result = await onImportDataset({
+        sourceFile: datasetSourceFile,
+        targetFile: datasetTargetFile,
+        scope: datasetScope,
+        series: datasetSeries.trim() || undefined,
+        episode: datasetEpisode.trim() || undefined,
+        groupName: datasetGroup.trim() || undefined,
+        qualityTag: datasetQuality,
+        sourceQuality: datasetSourceQuality,
+      })
+      setDatasetStatus(`Zaimportowano: ${result.entries.length} | Source: ${datasetSourceQuality} | Trusted: ${result.trusted} | Usable: ${result.usable} | Low-confidence: ${result.lowConfidence} | Odrzucone: ${result.rejected}`)
+    } catch (error) {
+      setDatasetStatus(`Blad importu: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setDatasetBusy(false)
+    }
+  }
+
+  const promptImportGlobalDataset = (mode: 'replace' | 'merge'): void => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (file) void onImportGlobalDataset(file, mode)
+    }
+    input.click()
+  }
+
+  const promptImportReviewedMemory = (mode: 'replace' | 'merge'): void => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.json'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (file) void onImportReviewedMemory(file, mode)
+    }
+    input.click()
+  }
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,8,12,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1002 }}>
       <div style={{ width: 'min(1600px, 98vw)', height: '92vh', background: '#1b1d27', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
@@ -2166,6 +2326,7 @@ function MemoryModal({ open, currentProjectId, store, onClose, onChange }: Memor
           <button style={{ ...BASE_BTN, height: 28, background: tab === 'browse' ? '#2d4b7d' : C.bg3 }} onClick={() => setTab('browse')}>Przegladaj</button>
           <button style={{ ...BASE_BTN, height: 28, background: tab === 'glossary' ? '#2d4b7d' : C.bg3 }} onClick={() => setTab('glossary')}>Glosariusz</button>
           <button style={{ ...BASE_BTN, height: 28, background: tab === 'projects' ? '#2d4b7d' : C.bg3 }} onClick={() => setTab('projects')}>Projekty i import</button>
+          <button style={{ ...BASE_BTN, height: 28, background: tab === 'import' ? '#2d4b7d' : C.bg3 }} onClick={() => setTab('import')}>Import bazy</button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, borderBottom: `1px solid ${C.border}` }}>
@@ -2320,10 +2481,280 @@ function MemoryModal({ open, currentProjectId, store, onClose, onChange }: Memor
               </div>
             </div>
           )}
+
+          {tab === 'import' && (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div style={{ display: 'grid', gap: 8, border: `1px solid ${C.border}`, background: '#21232d', padding: 10 }}>
+                <div style={{ fontWeight: 700 }}>Import bazy tlumaczen (ASS EN + ASS PL)</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <span>Plik EN (oryginal)</span>
+                    <input type="file" accept=".ass,.ssa" onChange={e => setDatasetSourceFile(e.currentTarget.files?.[0] ?? null)} />
+                  </div>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <span>Plik PL (tlumaczenie)</span>
+                    <input type="file" accept=".ass,.ssa" onChange={e => setDatasetTargetFile(e.currentTarget.files?.[0] ?? null)} />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 1fr 1fr 240px', gap: 8 }}>
+                  <input placeholder="Seria (opcjonalnie)" value={datasetSeries} onChange={e => setDatasetSeries(e.currentTarget.value)} style={{ ...BASE_SEL, height: 26 }} />
+                  <input placeholder="Odcinek" value={datasetEpisode} onChange={e => setDatasetEpisode(e.currentTarget.value)} style={{ ...BASE_SEL, height: 26 }} />
+                  <input placeholder="Grupa / zrodlo" value={datasetGroup} onChange={e => setDatasetGroup(e.currentTarget.value)} style={{ ...BASE_SEL, height: 26 }} />
+                  <select value={datasetQuality} onChange={e => setDatasetQuality(e.currentTarget.value as 'trusted' | 'low-confidence')} style={{ ...BASE_SEL, height: 26 }}>
+                    <option value="trusted">trusted</option>
+                    <option value="low-confidence">low-confidence</option>
+                  </select>
+                  <select value={datasetSourceQuality} onChange={e => setDatasetSourceQuality(e.currentTarget.value as typeof datasetSourceQuality)} style={{ ...BASE_SEL, height: 26 }}>
+                    <option value="machine_generated_analysis_only">machine_generated_analysis_only</option>
+                    <option value="trusted_professional_import">trusted_professional_import</option>
+                    <option value="project_runtime_memory">project_runtime_memory</option>
+                    <option value="reviewed_manual">reviewed_manual</option>
+                  </select>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span>Zakres:</span>
+                  <select value={datasetScope} onChange={e => setDatasetScope(e.currentTarget.value as 'project' | 'global')} style={{ ...BASE_SEL, width: 160 }}>
+                    <option value="project">projekt</option>
+                    <option value="global">global</option>
+                  </select>
+                  <button style={BASE_BTN} onClick={() => { void runDatasetImport() }} disabled={datasetBusy}>Importuj</button>
+                  <span style={{ color: C.textDim, fontSize: 12 }}>{datasetStatus}</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: 8, border: `1px solid ${C.border}`, background: '#21232d', padding: 10 }}>
+                <div style={{ fontWeight: 700 }}>Statystyki baz</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, fontSize: 12 }}>
+                  <div>Project imported: <strong>{projectImportedCount}</strong></div>
+                  <div>Global imported: <strong>{globalImportedCount}</strong></div>
+                  <div>Reviewed memory: <strong>{reviewedCount}</strong></div>
+                  <div>Dialogue patterns: <strong>{dialoguePatternCount}</strong></div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: 8, border: `1px solid ${C.border}`, background: '#21232d', padding: 10 }}>
+                <div style={{ fontWeight: 700 }}>Globalna baza + reviewed</div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button style={BASE_BTN} onClick={onExportGlobalDataset}>Eksport globalnej bazy</button>
+                  <button style={BASE_BTN} onClick={() => promptImportGlobalDataset('replace')}>Import globalnej (replace)</button>
+                  <button style={BASE_BTN} onClick={() => promptImportGlobalDataset('merge')}>Import globalnej (merge)</button>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button style={BASE_BTN} onClick={onExportReviewedMemory}>Eksport reviewed</button>
+                  <button style={BASE_BTN} onClick={() => promptImportReviewedMemory('replace')}>Import reviewed (replace)</button>
+                  <button style={BASE_BTN} onClick={() => promptImportReviewedMemory('merge')}>Import reviewed (merge)</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${C.border}`, padding: 8 }}>
           <button style={BASE_BTN} onClick={onClose}>Zamknij</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface BatchImportModalProps {
+  open: boolean
+  folderPath: string
+  files: BatchImportFileInfo[]
+  pairs: BatchImportPairInfo[]
+  statusText: string
+  recursive: boolean
+  scope: 'project' | 'global'
+  sourceQuality: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'machine_generated_analysis_only'
+  qualityMode: 'trusted_only' | 'trusted_usable' | 'all'
+  includeLowConfidence: boolean
+  saveReport: boolean
+  groupName: string
+  manualPairs: Record<string, { sourceFile?: string; targetFile?: string }>
+  onClose: () => void
+  onRescan: (recursive: boolean) => void
+  onRunImport: () => void
+  onChangeRecursive: (next: boolean) => void
+  onChangeScope: (next: 'project' | 'global') => void
+  onChangeSourceQuality: (next: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'machine_generated_analysis_only') => void
+  onChangeQualityMode: (next: 'trusted_only' | 'trusted_usable' | 'all') => void
+  onChangeIncludeLow: (next: boolean) => void
+  onChangeSaveReport: (next: boolean) => void
+  onChangeGroupName: (next: string) => void
+  onUpdateManualPair: (key: string, next: { sourceFile?: string; targetFile?: string }) => void
+}
+
+function BatchImportModal({
+  open,
+  folderPath,
+  files,
+  pairs,
+  statusText,
+  recursive,
+  scope,
+  sourceQuality,
+  qualityMode,
+  includeLowConfidence,
+  saveReport,
+  groupName,
+  manualPairs,
+  onClose,
+  onRescan,
+  onRunImport,
+  onChangeRecursive,
+  onChangeScope,
+  onChangeSourceQuality,
+  onChangeQualityMode,
+  onChangeIncludeLow,
+  onChangeSaveReport,
+  onChangeGroupName,
+  onUpdateManualPair,
+}: BatchImportModalProps): React.ReactElement | null {
+  if (!open) return null
+
+  const pairedCount = pairs.filter(item => item.status === 'paired').length
+  const invalidCount = pairs.filter(item => item.status === 'invalid-naming').length
+  const missingSource = pairs.filter(item => item.status === 'missing-source').length
+  const missingTranslation = pairs.filter(item => item.status === 'missing-translation').length
+  const needsManual = pairs.filter(item => item.status === 'needs-manual-confirm').length
+  const manualReadyCount = pairs
+    .filter(item => item.status === 'needs-manual-confirm' && item.manualKey)
+    .filter(item => {
+      const selected = manualPairs[item.manualKey as string]
+      return Boolean(selected?.sourceFile && selected?.targetFile)
+    })
+    .length
+  const sourceOptions = files.filter(file => file.lang && file.lang !== 'PL')
+  const targetOptions = files.filter(file => file.valid && file.lang === 'PL')
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(8,8,12,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1003 }}>
+      <div style={{ width: 'min(1700px, 98vw)', height: '92vh', background: '#1b1d27', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontWeight: 700 }}>Import bazy z folderu</div>
+          <div style={{ color: C.textDim, fontSize: 12 }}>Folder: {folderPath || 'brak'}</div>
+          <div style={{ marginLeft: 'auto', color: C.textDim, fontSize: 12 }}>{statusText}</div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12, padding: 10, borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 12, color: C.textDim }}>
+              Pliki ASS: {files.length} | Pary: {pairedCount} | Braki: {missingSource + missingTranslation} | Invalid: {invalidCount} | Manual: {needsManual}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={recursive} onChange={e => onChangeRecursive(e.currentTarget.checked)} />
+                Skanuj podfoldery
+              </label>
+              <button style={BASE_BTN} onClick={() => onRescan(recursive)}>Reskanuj</button>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div style={{ display: 'grid', gap: 4 }}>
+                <span style={{ fontSize: 11, color: C.textDim }}>Zakres importu</span>
+                <select value={scope} onChange={e => onChangeScope(e.currentTarget.value as 'project' | 'global')} style={{ ...BASE_SEL, height: 26 }}>
+                  <option value="project">projekt</option>
+                  <option value="global">global</option>
+                </select>
+              </div>
+              <div style={{ display: 'grid', gap: 4 }}>
+                <span style={{ fontSize: 11, color: C.textDim }}>Source quality</span>
+                <select value={sourceQuality} onChange={e => onChangeSourceQuality(e.currentTarget.value as typeof sourceQuality)} style={{ ...BASE_SEL, height: 26 }}>
+                  <option value="machine_generated_analysis_only">machine_generated_analysis_only</option>
+                  <option value="trusted_professional_import">trusted_professional_import</option>
+                  <option value="project_runtime_memory">project_runtime_memory</option>
+                  <option value="reviewed_manual">reviewed_manual</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+              <div style={{ display: 'grid', gap: 4 }}>
+                <span style={{ fontSize: 11, color: C.textDim }}>Filtr jakosci</span>
+                <select value={qualityMode} onChange={e => onChangeQualityMode(e.currentTarget.value as 'trusted_only' | 'trusted_usable' | 'all')} style={{ ...BASE_SEL, height: 26 }}>
+                  <option value="trusted_only">tylko trusted</option>
+                  <option value="trusted_usable">trusted + usable</option>
+                  <option value="all">wszystkie</option>
+                </select>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={includeLowConfidence} onChange={e => onChangeIncludeLow(e.currentTarget.checked)} disabled={qualityMode !== 'all'} />
+                uwzględnij low-confidence
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={saveReport} onChange={e => onChangeSaveReport(e.currentTarget.checked)} />
+                zapisz raport JSON
+              </label>
+            </div>
+            <div style={{ display: 'grid', gap: 4 }}>
+              <span style={{ fontSize: 11, color: C.textDim }}>Nazwa grupy (opcjonalnie)</span>
+              <input value={groupName} onChange={e => onChangeGroupName(e.currentTarget.value)} style={{ ...BASE_SEL, height: 26 }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 10 }}>
+          <div style={{ border: `1px solid ${C.border}`, background: '#21232d' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr 100px 140px 170px 1fr', padding: '6px 8px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700 }}>
+              <span>Source</span><span>Base title</span><span>Episode</span><span>Target</span><span>Status</span><span>Pliki</span>
+            </div>
+            <div style={{ maxHeight: '58vh', overflow: 'auto' }}>
+              {pairs.map((pair, index) => (
+                <div
+                  key={`${pair.baseTitle}-${pair.episode}-${index}`}
+                  style={{ display: 'grid', gridTemplateColumns: '120px 1fr 100px 140px 170px 1fr', padding: '4px 8px', borderBottom: `1px solid ${C.borderB}`, fontSize: 12 }}
+                >
+                  <span>{pair.sourceLang ?? '-'}</span>
+                  <span>{pair.baseTitle}</span>
+                  <span>{pair.episode}</span>
+                  <span>{pair.targetLang ?? '-'}</span>
+                  <span>{pair.status}{pair.issues?.length ? ` (${pair.issues.join(', ')})` : ''}</span>
+                  {pair.status === 'needs-manual-confirm' && pair.manualKey ? (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <select
+                        value={manualPairs[pair.manualKey]?.sourceFile ?? (pair.sourceCandidates?.length === 1 ? pair.sourceCandidates[0].filePath : '')}
+                        onChange={e => {
+                          const value = e.currentTarget.value
+                          onUpdateManualPair(pair.manualKey as string, { sourceFile: value || undefined })
+                        }}
+                        style={{ ...BASE_SEL, width: 240 }}
+                      >
+                        <option value="">(source)</option>
+                        {(pair.sourceCandidates?.length ? pair.sourceCandidates : sourceOptions).map(file => (
+                          <option key={file.filePath} value={file.filePath}>{file.fileName}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={manualPairs[pair.manualKey]?.targetFile ?? (pair.targetCandidates?.length === 1 ? pair.targetCandidates[0].filePath : '')}
+                        onChange={e => {
+                          const value = e.currentTarget.value
+                          onUpdateManualPair(pair.manualKey as string, { targetFile: value || undefined })
+                        }}
+                        style={{ ...BASE_SEL, width: 240 }}
+                      >
+                        <option value="">(target)</option>
+                        {(pair.targetCandidates?.length ? pair.targetCandidates : targetOptions).map(file => (
+                          <option key={file.filePath} value={file.filePath}>{file.fileName}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <span style={{ color: C.textDim }}>
+                      {pair.sourceFile?.fileName ?? '-'} | {pair.targetFile?.fileName ?? '-'}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {!pairs.length && (
+                <div style={{ padding: 8, fontSize: 12, color: C.textDim }}>Brak wykrytych par.</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${C.border}`, padding: 8 }}>
+          <button style={BASE_BTN} onClick={onClose}>Zamknij</button>
+          <button style={BASE_BTN} onClick={onRunImport} disabled={pairedCount + manualReadyCount === 0}>Importuj</button>
         </div>
       </div>
     </div>
@@ -3920,6 +4351,8 @@ export default function App(): React.ReactElement {
   const [isApiOpen, setApiOpen] = useState(false)
   const [isCharactersOpen, setCharactersOpen] = useState(false)
   const [isMemoryOpen, setMemoryOpen] = useState(false)
+  const [memoryModalInitialTab, setMemoryModalInitialTab] = useState<MemoryTab>('browse')
+  const [isBatchImportOpen, setBatchImportOpen] = useState(false)
   const [isGenderCorrectionOpen, setGenderCorrectionOpen] = useState(false)
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0)
   const [selectedModelId, setSelectedModelId] = useState(DEFAULT_TRANSLATION_MODEL_ID)
@@ -3932,7 +4365,23 @@ export default function App(): React.ReactElement {
   const [targetLang, setTargetLang] = useState('pl')
   const [styleSettings, setStyleSettings] = useState<ProjectTranslationStyleSettings>(() => createProjectStyleSettings(currentProjectId, []))
   const [memoryStore, setMemoryStore] = useState<MemoryStore>(INITIAL_MEMORY)
+  const [projectImportedMemory, setProjectImportedMemory] = useState<TranslationMemoryDatasetEntry[]>([])
+  const [reviewedMemory, setReviewedMemory] = useState<TranslationMemoryDatasetEntry[]>([])
+  const [globalImportedMemory, setGlobalImportedMemory] = useState<TranslationMemoryDatasetEntry[]>([])
+  const [dialoguePatterns, setDialoguePatterns] = useState<DialoguePatternEntry[]>([])
   const [projectTerms, setProjectTerms] = useState<Record<string, string>>({})
+  const [batchImportFolder, setBatchImportFolder] = useState<string>('')
+  const [batchImportFiles, setBatchImportFiles] = useState<BatchImportFileInfo[]>([])
+  const [batchImportPairs, setBatchImportPairs] = useState<BatchImportPairInfo[]>([])
+  const [batchImportStatusText, setBatchImportStatusText] = useState<string>('')
+  const [batchImportRecursive, setBatchImportRecursive] = useState<boolean>(false)
+  const [batchImportScope, setBatchImportScope] = useState<'project' | 'global'>('project')
+  const [batchImportSourceQuality, setBatchImportSourceQuality] = useState<'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'machine_generated_analysis_only'>('machine_generated_analysis_only')
+  const [batchImportQualityMode, setBatchImportQualityMode] = useState<'trusted_only' | 'trusted_usable' | 'all'>('trusted_only')
+  const [batchImportIncludeLow, setBatchImportIncludeLow] = useState<boolean>(false)
+  const [batchImportSaveReport, setBatchImportSaveReport] = useState<boolean>(true)
+  const [batchImportGroupName, setBatchImportGroupName] = useState<string>('')
+  const [batchImportManualPairs, setBatchImportManualPairs] = useState<Record<string, { sourceFile?: string; targetFile?: string }>>({})
   const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(null)
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
@@ -3996,6 +4445,11 @@ export default function App(): React.ReactElement {
   }, [])
 
   useEffect(() => {
+    void loadGlobalImportedMemoryFromDisk()
+    void loadDialoguePatternsFromDisk()
+  }, [])
+
+  useEffect(() => {
     window.electronAPI?.signalRendererReady?.()
   }, [])
 
@@ -4041,6 +4495,8 @@ export default function App(): React.ReactElement {
     }
     void loadTranslationMemoryFromDisk(activeDiskProject.projectDir, activeDiskProject.projectId)
     void loadProjectTermsFromDisk(activeDiskProject.projectDir)
+    void loadProjectImportedMemoryFromDisk(activeDiskProject.projectDir)
+    void loadReviewedMemoryFromDisk(activeDiskProject.projectDir)
   }, [activeDiskProject?.projectDir, activeDiskProject?.projectId])
 
   useEffect(() => {
@@ -4938,13 +5394,14 @@ export default function App(): React.ReactElement {
       .filter(entry => typeof entry.source === 'string' && typeof entry.target === 'string')
       .map(entry => ({
         id: nextId++,
-        source: (entry.source ?? '').trim(),
-        target: (entry.target ?? '').trim(),
-        character: (entry.character ?? '').trim(),
-        projectId,
-        createdAt: entry.createdAt ?? now,
-        usageCount: Number.isFinite(entry.usageCount) ? Number(entry.usageCount) : 0,
-      }))
+      source: (entry.source ?? '').trim(),
+      target: (entry.target ?? '').trim(),
+      character: (entry.character ?? '').trim(),
+      projectId,
+      createdAt: entry.createdAt ?? now,
+      usageCount: Number.isFinite(entry.usageCount) ? Number(entry.usageCount) : 0,
+      sourceQuality: entry.sourceQuality ?? 'project_runtime_memory',
+    }))
       .filter(entry => entry.source && entry.target)
   }
 
@@ -4968,6 +5425,76 @@ export default function App(): React.ReactElement {
       })
     } catch {
       // ignore invalid file
+    }
+  }
+
+  const loadProjectImportedMemoryFromDisk = async (projectDir: string): Promise<void> => {
+    if (!window.electronAPI?.readProjectTextFile) return
+    const result = await window.electronAPI.readProjectTextFile({
+      projectDir,
+      relativePath: 'translation_memory_dataset.json',
+    })
+    if (!result.ok || !result.content) {
+      setProjectImportedMemory([])
+      return
+    }
+    try {
+      const parsed = JSON.parse(result.content) as { entries?: TranslationMemoryDatasetEntry[] }
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : []
+      setProjectImportedMemory(entries)
+    } catch {
+      setProjectImportedMemory([])
+    }
+  }
+
+  const loadReviewedMemoryFromDisk = async (projectDir: string): Promise<void> => {
+    if (!window.electronAPI?.readProjectTextFile) return
+    const result = await window.electronAPI.readProjectTextFile({
+      projectDir,
+      relativePath: 'translation_memory_reviewed.json',
+    })
+    if (!result.ok || !result.content) {
+      setReviewedMemory([])
+      return
+    }
+    try {
+      const parsed = JSON.parse(result.content) as { entries?: TranslationMemoryDatasetEntry[] }
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : []
+      setReviewedMemory(entries)
+    } catch {
+      setReviewedMemory([])
+    }
+  }
+
+  const loadGlobalImportedMemoryFromDisk = async (): Promise<void> => {
+    if (!window.electronAPI?.readUserDataTextFile) return
+    const result = await window.electronAPI.readUserDataTextFile({ relativePath: 'translation_memory_db.json' })
+    if (!result.ok || !result.content) {
+      setGlobalImportedMemory([])
+      return
+    }
+    try {
+      const parsed = JSON.parse(result.content) as { entries?: TranslationMemoryDatasetEntry[] }
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : []
+      setGlobalImportedMemory(entries)
+    } catch {
+      setGlobalImportedMemory([])
+    }
+  }
+
+  const loadDialoguePatternsFromDisk = async (): Promise<void> => {
+    if (!window.electronAPI?.readUserDataTextFile) return
+    const result = await window.electronAPI.readUserDataTextFile({ relativePath: 'dialogue_patterns.json' })
+    if (!result.ok || !result.content) {
+      setDialoguePatterns([])
+      return
+    }
+    try {
+      const parsed = JSON.parse(result.content) as { entries?: DialoguePatternEntry[] }
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : []
+      setDialoguePatterns(entries)
+    } catch {
+      setDialoguePatterns([])
     }
   }
 
@@ -5011,6 +5538,7 @@ export default function App(): React.ReactElement {
         character: entry.character,
         usageCount: entry.usageCount,
         createdAt: entry.createdAt,
+        sourceQuality: entry.sourceQuality ?? 'project_runtime_memory',
       }))
     const payload = {
       projectId: activeDiskProject.projectId,
@@ -5022,6 +5550,332 @@ export default function App(): React.ReactElement {
       relativePath: 'translationMemory.json',
       content: JSON.stringify(payload, null, 2),
     })
+  }
+
+  const persistProjectImportedMemoryToDisk = async (entries: TranslationMemoryDatasetEntry[]): Promise<void> => {
+    if (!activeDiskProject || !window.electronAPI?.writeProjectTextFile) return
+    const payload = { entries }
+    await window.electronAPI.writeProjectTextFile({
+      projectDir: activeDiskProject.projectDir,
+      relativePath: 'translation_memory_dataset.json',
+      content: JSON.stringify(payload, null, 2),
+    })
+  }
+
+  const persistReviewedMemoryToDisk = async (entries: TranslationMemoryDatasetEntry[]): Promise<void> => {
+    if (!activeDiskProject || !window.electronAPI?.writeProjectTextFile) return
+    const payload = { entries }
+    await window.electronAPI.writeProjectTextFile({
+      projectDir: activeDiskProject.projectDir,
+      relativePath: 'translation_memory_reviewed.json',
+      content: JSON.stringify(payload, null, 2),
+    })
+  }
+
+  const persistGlobalImportedMemoryToDisk = async (entries: TranslationMemoryDatasetEntry[]): Promise<void> => {
+    if (!window.electronAPI?.writeUserDataTextFile) return
+    const payload = { entries }
+    await window.electronAPI.writeUserDataTextFile({
+      relativePath: 'translation_memory_db.json',
+      content: JSON.stringify(payload, null, 2),
+    })
+  }
+
+  const persistDialoguePatternsToDisk = async (entries: DialoguePatternEntry[]): Promise<void> => {
+    if (!window.electronAPI?.writeUserDataTextFile) return
+    const payload = { entries }
+    await window.electronAPI.writeUserDataTextFile({
+      relativePath: 'dialogue_patterns.json',
+      content: JSON.stringify(payload, null, 2),
+    })
+  }
+
+  const importTranslationDataset = async (args: {
+    sourceFile: File
+    targetFile: File
+    scope: 'project' | 'global'
+    series?: string
+    episode?: string
+    groupName?: string
+    qualityTag?: 'trusted' | 'low-confidence'
+    sourceQuality?: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'machine_generated_analysis_only'
+  }): Promise<ReturnType<typeof importTranslationMemoryFromAssPair>> => {
+    const sourceContent = await args.sourceFile.text()
+    const targetContent = await args.targetFile.text()
+    const result = importTranslationMemoryFromAssPair(sourceContent, targetContent, {
+      series: args.series,
+      episode: args.episode,
+      groupName: args.groupName,
+      quality: args.qualityTag,
+      sourceQuality: args.sourceQuality,
+    })
+
+    if (args.scope === 'project') {
+      const merged = mergeDatasetEntries(projectImportedMemory, result.entries)
+      setProjectImportedMemory(merged)
+      await persistProjectImportedMemoryToDisk(merged)
+      const report = {
+        createdAt: new Date().toISOString(),
+        scope: 'project',
+        series: args.series ?? null,
+        episode: args.episode ?? null,
+        groupName: args.groupName ?? null,
+        qualityTag: args.qualityTag ?? 'trusted',
+        sourceQuality: args.sourceQuality ?? 'machine_generated_analysis_only',
+        totalPairs: result.totalPairs,
+        imported: result.entries.length,
+        trusted: result.trusted,
+        usable: result.usable,
+        rejected: result.rejected,
+        lowConfidence: result.lowConfidence,
+        examples: result.entries.slice(0, 20).map(entry => ({
+          source: entry.source,
+          target: entry.target,
+          quality: entry.quality,
+        })),
+      }
+      if (activeDiskProject && window.electronAPI?.writeProjectTextFile) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        await window.electronAPI.writeProjectTextFile({
+          projectDir: activeDiskProject.projectDir,
+          relativePath: `import_reports/translation_import_report_${stamp}.json`,
+          content: JSON.stringify(report, null, 2),
+        })
+      }
+      return result
+    }
+
+    const merged = mergeDatasetEntries(globalImportedMemory, result.entries)
+    const patterns = buildDialoguePatternsFromEntries(merged)
+    setGlobalImportedMemory(merged)
+    setDialoguePatterns(patterns)
+    await persistGlobalImportedMemoryToDisk(merged)
+    await persistDialoguePatternsToDisk(patterns)
+    const report = {
+      createdAt: new Date().toISOString(),
+      scope: 'global',
+      series: args.series ?? null,
+      episode: args.episode ?? null,
+      groupName: args.groupName ?? null,
+      qualityTag: args.qualityTag ?? 'trusted',
+      sourceQuality: args.sourceQuality ?? 'machine_generated_analysis_only',
+      totalPairs: result.totalPairs,
+      imported: result.entries.length,
+      trusted: result.trusted,
+      usable: result.usable,
+      rejected: result.rejected,
+      lowConfidence: result.lowConfidence,
+      examples: result.entries.slice(0, 20).map(entry => ({
+        source: entry.source,
+        target: entry.target,
+        quality: entry.quality,
+      })),
+    }
+    if (window.electronAPI?.writeUserDataTextFile) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      await window.electronAPI.writeUserDataTextFile({
+        relativePath: `import_reports/translation_import_report_${stamp}.json`,
+        content: JSON.stringify(report, null, 2),
+      })
+    }
+    return result
+  }
+
+  const exportGlobalDataset = (): void => {
+    const payload = { entries: globalImportedMemory }
+    downloadTextFile('translation_memory_db.json', JSON.stringify(payload, null, 2))
+  }
+
+  const importGlobalDatasetFile = async (file: File, mode: 'replace' | 'merge'): Promise<void> => {
+    const content = await file.text()
+    const parsed = JSON.parse(content) as { entries?: TranslationMemoryDatasetEntry[] }
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : []
+    const merged = mode === 'merge' ? mergeDatasetEntries(globalImportedMemory, entries) : entries
+    const patterns = buildDialoguePatternsFromEntries(merged)
+    setGlobalImportedMemory(merged)
+    setDialoguePatterns(patterns)
+    await persistGlobalImportedMemoryToDisk(merged)
+    await persistDialoguePatternsToDisk(patterns)
+  }
+
+  const exportReviewedMemory = (): void => {
+    const payload = { entries: reviewedMemory }
+    downloadTextFile('translation_memory_reviewed.json', JSON.stringify(payload, null, 2))
+  }
+
+  const importReviewedMemoryFile = async (file: File, mode: 'replace' | 'merge'): Promise<void> => {
+    const content = await file.text()
+    const parsed = JSON.parse(content) as { entries?: TranslationMemoryDatasetEntry[] }
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : []
+    const merged = mode === 'merge' ? mergeDatasetEntries(reviewedMemory, entries) : entries
+    setReviewedMemory(merged)
+    await persistReviewedMemoryToDisk(merged)
+  }
+
+  const buildAutoManualPairs = (pairs: BatchImportPairInfo[]): Record<string, { sourceFile?: string; targetFile?: string }> => {
+    const next: Record<string, { sourceFile?: string; targetFile?: string }> = {}
+    pairs.forEach(pair => {
+      if (pair.status !== 'needs-manual-confirm' || !pair.manualKey) return
+      const sourceCandidate = pair.sourceCandidates?.length === 1 ? pair.sourceCandidates[0]?.filePath : undefined
+      const targetCandidate = pair.targetCandidates?.length === 1 ? pair.targetCandidates[0]?.filePath : undefined
+      if (!sourceCandidate && !targetCandidate) return
+      next[pair.manualKey] = {
+        ...(sourceCandidate ? { sourceFile: sourceCandidate } : {}),
+        ...(targetCandidate ? { targetFile: targetCandidate } : {}),
+      }
+    })
+    return next
+  }
+
+  const scanBatchImportFolder = async (dirPath: string, recursive: boolean): Promise<void> => {
+    if (!window.electronAPI?.listAssFiles) return
+    setBatchImportStatusText('Skanowanie folderu...')
+    const result = await window.electronAPI.listAssFiles({ dir: dirPath, recursive })
+    if (!result.ok || !result.files) {
+      setBatchImportStatusText(result.error || 'Nie udalo sie odczytac folderu.')
+      return
+    }
+    const { fileInfos, pairs } = analyzeBatchImportFiles(result.files)
+    setBatchImportFiles(fileInfos)
+    setBatchImportPairs(pairs)
+    setBatchImportManualPairs(buildAutoManualPairs(pairs))
+    setBatchImportStatusText(`Znaleziono ${result.files.length} plikow ASS | Pary: ${pairs.filter(item => item.status === 'paired').length}`)
+  }
+
+  const handleOpenBatchImport = async (): Promise<void> => {
+    if (!window.electronAPI?.pickProjectDirectory) return
+    const result = await window.electronAPI.pickProjectDirectory({ title: 'Wybierz folder z ASS' })
+    if (result.canceled || !result.directoryPath) return
+    setBatchImportFolder(result.directoryPath)
+    setBatchImportOpen(true)
+    await scanBatchImportFolder(result.directoryPath, batchImportRecursive)
+  }
+
+  const applyBatchQualityFilter = (
+    entries: TranslationMemoryDatasetEntry[],
+    mode: 'trusted_only' | 'trusted_usable' | 'all',
+    includeLow: boolean,
+  ): TranslationMemoryDatasetEntry[] => {
+    if (mode === 'trusted_only') return entries.filter(entry => entry.quality === 'trusted')
+    if (mode === 'trusted_usable') return entries.filter(entry => entry.quality === 'trusted' || entry.quality === 'usable')
+    if (!includeLow) return entries.filter(entry => entry.quality !== 'low-confidence')
+    return entries
+  }
+
+  const runBatchImport = async (): Promise<void> => {
+    if (!window.electronAPI?.readSubtitleFile) return
+    const paired = batchImportPairs.filter(item => item.status === 'paired' && item.sourceFile && item.targetFile)
+    const manualPaired = batchImportPairs
+      .filter(item => item.status === 'needs-manual-confirm' && item.manualKey)
+      .map(item => {
+        const selected = batchImportManualPairs[item.manualKey as string]
+        if (!selected?.sourceFile || !selected?.targetFile) return null
+        const sourceFile = batchImportFiles.find(file => file.filePath === selected.sourceFile)
+        const targetFile = batchImportFiles.find(file => file.filePath === selected.targetFile)
+        if (!sourceFile || !targetFile) return null
+        return {
+          baseTitle: item.baseTitle,
+          episode: item.episode === '??' ? '' : item.episode,
+          sourceFile,
+          targetFile,
+        }
+      })
+      .filter(Boolean) as Array<{ baseTitle: string; episode: string; sourceFile: BatchImportFileInfo; targetFile: BatchImportFileInfo }>
+    const allPairs = [...paired, ...manualPaired]
+    if (!allPairs.length) {
+      setBatchImportStatusText('Brak poprawnych par do importu.')
+      return
+    }
+    setBatchImportStatusText('Import w toku...')
+    let trusted = 0
+    let usable = 0
+    let lowConfidence = 0
+    let rejected = 0
+    let importedEntriesCount = 0
+    const collected: TranslationMemoryDatasetEntry[] = []
+
+    for (const pair of allPairs) {
+      const sourceRes = await window.electronAPI.readSubtitleFile(pair.sourceFile!.filePath)
+      const targetRes = await window.electronAPI.readSubtitleFile(pair.targetFile!.filePath)
+      const result = importTranslationMemoryFromAssPair(sourceRes.content, targetRes.content, {
+        series: pair.baseTitle,
+        episode: pair.episode,
+        groupName: batchImportGroupName.trim() || undefined,
+        sourceQuality: batchImportSourceQuality,
+      })
+
+      trusted += result.trusted
+      usable += result.usable
+      lowConfidence += result.lowConfidence
+      rejected += result.rejected
+
+      const filtered = applyBatchQualityFilter(result.entries, batchImportQualityMode, batchImportIncludeLow)
+      importedEntriesCount += filtered.length
+      collected.push(...filtered)
+    }
+
+    if (!collected.length) {
+      setBatchImportStatusText('Import zakonczony: brak wpisow po filtrach jakosci.')
+      return
+    }
+
+    if (batchImportScope === 'project') {
+      const merged = mergeDatasetEntries(projectImportedMemory, collected)
+      setProjectImportedMemory(merged)
+      await persistProjectImportedMemoryToDisk(merged)
+      if (batchImportSaveReport && activeDiskProject && window.electronAPI?.writeProjectTextFile) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const report = {
+          createdAt: new Date().toISOString(),
+          scope: 'project',
+          folder: batchImportFolder,
+          pairsDetected: allPairs.length,
+          importedEntries: importedEntriesCount,
+          trusted,
+          usable,
+          lowConfidence,
+          rejected,
+          sourceQuality: batchImportSourceQuality,
+          qualityMode: batchImportQualityMode,
+          includeLowConfidence: batchImportIncludeLow,
+        }
+        await window.electronAPI.writeProjectTextFile({
+          projectDir: activeDiskProject.projectDir,
+          relativePath: `import_reports/batch_translation_import_report_${stamp}.json`,
+          content: JSON.stringify(report, null, 2),
+        })
+      }
+    } else {
+      const merged = mergeDatasetEntries(globalImportedMemory, collected)
+      const patterns = buildDialoguePatternsFromEntries(merged.filter(entry => entry.quality === 'trusted'))
+      setGlobalImportedMemory(merged)
+      setDialoguePatterns(patterns)
+      await persistGlobalImportedMemoryToDisk(merged)
+      await persistDialoguePatternsToDisk(patterns)
+      if (batchImportSaveReport && window.electronAPI?.writeUserDataTextFile) {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const report = {
+          createdAt: new Date().toISOString(),
+          scope: 'global',
+          folder: batchImportFolder,
+          pairsDetected: allPairs.length,
+          importedEntries: importedEntriesCount,
+          trusted,
+          usable,
+          lowConfidence,
+          rejected,
+          sourceQuality: batchImportSourceQuality,
+          qualityMode: batchImportQualityMode,
+          includeLowConfidence: batchImportIncludeLow,
+        }
+        await window.electronAPI.writeUserDataTextFile({
+          relativePath: `import_reports/batch_translation_import_report_${stamp}.json`,
+          content: JSON.stringify(report, null, 2),
+        })
+      }
+    }
+
+    setBatchImportStatusText(`Import zakonczony. Wpisy: ${importedEntriesCount} | trusted: ${trusted} | usable: ${usable} | low: ${lowConfidence} | rejected: ${rejected}`)
   }
 
   const applyCharacterToSelectedLines = (characterName: string): void => {
@@ -5146,10 +6000,310 @@ export default function App(): React.ReactElement {
   ])
 
   const resolveMemoryTranslation = (row: DialogRow): string | null => {
-    const exactMemory = resolveTranslationMemoryEntry(memoryStore.entries, row.source, currentProjectId)
+    const reviewedEntries = reviewedMemory
+      .filter(entry => entry.quality !== 'low-confidence' && entry.sourceQuality === 'reviewed_manual')
+      .map(entry => ({ source: entry.source, target: entry.target, usageCount: 0 }))
+    const projectEntries = memoryStore.entries
+      .filter(entry => entry.projectId === currentProjectId && (entry.sourceQuality ?? 'project_runtime_memory') === 'project_runtime_memory')
+    const projectImportedEntries = projectImportedMemory
+      .filter(entry => entry.quality !== 'low-confidence' && entry.sourceQuality === 'trusted_professional_import')
+      .map(entry => ({ source: entry.source, target: entry.target, usageCount: 0 }))
+    const globalImportedEntries = globalImportedMemory
+      .filter(entry => entry.quality !== 'low-confidence' && entry.sourceQuality === 'trusted_professional_import')
+      .map(entry => ({ source: entry.source, target: entry.target, usageCount: 0 }))
+    const fallbackEntries = memoryStore.entries
+      .filter(entry => entry.projectId === 'Global')
+    const patternEntries = dialoguePatterns
+      .filter(entry => entry.count >= 2)
+      .map(entry => ({ source: entry.source, target: entry.target, usageCount: entry.count }))
+
+    const exactMemory = resolveTranslationMemoryWithPriority(row.source, [
+      reviewedEntries,
+      projectEntries,
+      projectImportedEntries,
+      globalImportedEntries,
+      fallbackEntries,
+      patternEntries,
+    ])
     if (!exactMemory?.target) return null
     if (normalizeForComparison(exactMemory.target) === normalizeForComparison(row.source)) return null
     return exactMemory.target
+  }
+
+  const normalizeBaseTitleForMatch = (value: string): string => {
+    const normalized = value
+      .toLowerCase()
+      .replace(/[_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!normalized) return ''
+    const stripped = normalized.replace(/^0*\d{1,3}[\s._-]+/, '').trim()
+    return stripped.length >= 3 ? stripped : normalized
+  }
+
+  const parseLanguagePrefixedAssName = (fileName: string): { lang: string; baseTitle: string; episode: string; confidence: 'confident' | 'needs-confirm'; rawBase: string; rawEpisode: string } | null => {
+    if (!/\.ass$/i.test(fileName)) return null
+    const base = fileName.replace(/\.ass$/i, '').trim()
+    const langMatch = base.match(/^\s*(?:\[(?<lang1>[A-Za-z]{2,3})\]|\((?<lang2>[A-Za-z]{2,3})\)|(?<lang3>[A-Za-z]{2,3}))[\s._-]+(.+)$/)
+    if (!langMatch) return null
+    const lang = (langMatch.groups?.lang1 || langMatch.groups?.lang2 || langMatch.groups?.lang3 || '').toUpperCase()
+    const restRaw = (langMatch[4] ?? '').trim()
+    if (!lang || !restRaw) return null
+    const rest = restRaw.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim()
+    let episode = ''
+    let baseTitle = ''
+    let confidence: 'confident' | 'needs-confirm' = 'confident'
+
+    const trailingEp = rest.match(/^(.*?)(?:[\s._-]+)(\d{1,3})(?:\D*)$/)
+    if (trailingEp) {
+      baseTitle = trailingEp[1].trim()
+      episode = trailingEp[2]
+      if (/^0*\d{1,3}[\s._-]+/.test(baseTitle)) {
+        const stripped = baseTitle.replace(/^0*\d{1,3}[\s._-]+/, '').trim()
+        if (stripped.length >= 3) {
+          baseTitle = stripped
+          confidence = 'needs-confirm'
+        }
+      }
+    } else {
+      const leadingEp = rest.match(/^0*(\d{1,3})[\s._-]+(.+)$/)
+      if (leadingEp) {
+        episode = leadingEp[1]
+        baseTitle = leadingEp[2].trim()
+        confidence = 'needs-confirm'
+      }
+    }
+
+    if (!episode) {
+      return { lang, baseTitle: rest, episode: '', confidence: 'needs-confirm', rawBase: restRaw, rawEpisode: '' }
+    }
+    const normalizedEpisode = episode.padStart(2, '0')
+    if (!baseTitle) {
+      return { lang, baseTitle: rest, episode: normalizedEpisode, confidence: 'needs-confirm', rawBase: restRaw, rawEpisode: episode }
+    }
+    return { lang, baseTitle, episode: normalizedEpisode, confidence, rawBase: restRaw, rawEpisode: episode }
+  }
+
+  const analyzeBatchImportFiles = (files: string[]): { fileInfos: BatchImportFileInfo[]; pairs: BatchImportPairInfo[] } => {
+    const fileInfos: BatchImportFileInfo[] = []
+    const groups = new Map<string, { baseTitle: string; episode: string; files: BatchImportFileInfo[] }>()
+    const manualCandidates: BatchImportFileInfo[] = []
+    const unprefixedCandidates: BatchImportFileInfo[] = []
+    const makeKey = (baseTitle: string, episode: string): string => `${normalizeBaseTitleForMatch(baseTitle)}::${episode}`
+
+    files.forEach(filePath => {
+      const fileName = filePath.split(/[\\/]/).pop() ?? filePath
+      const parsed = parseLanguagePrefixedAssName(fileName)
+      if (!parsed) {
+        const fallback = fileName.replace(/\.ass$/i, '').trim()
+        const epMatch = fallback.match(/^(.*?)(?:\s*[-_]\s*|\s+)(\d{1,3})(?:\D*)$/)
+        const baseTitle = epMatch?.[1]?.trim() ?? fallback
+        const episode = epMatch?.[2]?.padStart(2, '0') ?? ''
+        const info: BatchImportFileInfo = {
+          filePath,
+          fileName,
+          lang: '',
+          baseTitle,
+          episode,
+          valid: false,
+          confidence: 'needs-confirm',
+          rawBase: baseTitle,
+          rawEpisode: episode,
+          reason: 'missing language prefix',
+        }
+        fileInfos.push(info)
+        unprefixedCandidates.push(info)
+        return
+      }
+      const info: BatchImportFileInfo = {
+        filePath,
+        fileName,
+        lang: parsed.lang,
+        baseTitle: parsed.baseTitle,
+        episode: parsed.episode,
+        valid: true,
+        confidence: parsed.confidence,
+        rawBase: parsed.rawBase,
+        rawEpisode: parsed.rawEpisode,
+      }
+      fileInfos.push(info)
+      if (parsed.confidence === 'needs-confirm') {
+        manualCandidates.push(info)
+        return
+      }
+      const key = makeKey(parsed.baseTitle, parsed.episode)
+      const existing = groups.get(key)
+      if (!existing) {
+        groups.set(key, { baseTitle: parsed.baseTitle, episode: parsed.episode, files: [info] })
+      } else {
+        existing.files.push(info)
+      }
+    })
+
+    const pairs: BatchImportPairInfo[] = []
+    groups.forEach(group => {
+      const sources = group.files.filter(item => item.lang !== 'PL')
+      const targets = group.files.filter(item => item.lang === 'PL')
+      const issues: string[] = []
+
+      if (targets.length > 1) {
+        issues.push('wiele plikow PL')
+      }
+      if (sources.length > 1) {
+        const langs = [...new Set(sources.map(item => item.lang))]
+        if (langs.length > 1) {
+          issues.push(`wiele jezykow zrodlowych: ${langs.join(', ')}`)
+        }
+      }
+
+      const targetFile = targets[0]
+      const sourceFile = sources.find(item => item.lang === 'EN') ?? sources[0]
+      const sourceLang = sourceFile?.lang
+      const targetLang = targetFile?.lang
+
+      if (!sourceFile) {
+        pairs.push({ baseTitle: group.baseTitle, episode: group.episode, targetLang, targetFile, status: 'missing-source', issues })
+        return
+      }
+      if (!targetFile) {
+        pairs.push({ baseTitle: group.baseTitle, episode: group.episode, sourceLang, sourceFile, status: 'missing-translation', issues })
+        return
+      }
+
+      if (issues.length > 0) {
+        pairs.push({
+          baseTitle: group.baseTitle,
+          episode: group.episode,
+          sourceLang,
+          targetLang,
+          sourceFile,
+          targetFile,
+          status: 'needs-manual-confirm',
+          manualKey: `group-${group.baseTitle}-${group.episode}`,
+          issues,
+          sourceCandidates: sources.length ? sources : undefined,
+          targetCandidates: targets.length ? targets : undefined,
+        })
+        return
+      }
+
+      pairs.push({
+        baseTitle: group.baseTitle,
+        episode: group.episode,
+        sourceLang,
+        targetLang,
+        sourceFile,
+        targetFile,
+        status: 'paired',
+      })
+    })
+
+    const plFiles = fileInfos.filter(item => item.lang === 'PL')
+    const unprefixedByEpisode = new Map<string, BatchImportFileInfo[]>()
+    unprefixedCandidates.forEach(item => {
+      const key = makeKey(item.baseTitle || item.fileName, item.episode || '')
+      const list = unprefixedByEpisode.get(key) ?? []
+      list.push(item)
+      unprefixedByEpisode.set(key, list)
+    })
+
+    plFiles.forEach(plFile => {
+      const key = makeKey(plFile.baseTitle, plFile.episode)
+      const candidates = unprefixedByEpisode.get(key) ?? []
+      if (!candidates.length) return
+      const existing = pairs.find(item => makeKey(item.baseTitle, item.episode) === key)
+      if (existing) return
+      pairs.push({
+        baseTitle: plFile.baseTitle,
+        episode: plFile.episode,
+        sourceLang: undefined,
+        targetLang: 'PL',
+        targetFile: plFile,
+        status: 'needs-manual-confirm',
+        manualKey: `${plFile.fileName}-fallback`,
+        issues: ['source missing prefix'],
+        sourceCandidates: candidates,
+      })
+    })
+
+    manualCandidates.forEach(item => {
+      const key = makeKey(item.baseTitle || item.fileName, item.episode || '')
+      const fallbackCandidates = item.lang === 'PL' ? (unprefixedByEpisode.get(key) ?? []) : []
+      pairs.push({
+        baseTitle: item.baseTitle || item.fileName,
+        episode: item.episode || '??',
+        sourceLang: item.lang !== 'PL' ? item.lang : undefined,
+        targetLang: item.lang === 'PL' ? 'PL' : undefined,
+        status: 'needs-manual-confirm',
+        manualKey: `${item.fileName}-${item.lang}`,
+        issues: ['requires manual confirmation'],
+        sourceCandidates: fallbackCandidates.length ? fallbackCandidates : undefined,
+      })
+    })
+
+    pairs.forEach(pair => {
+      if (pair.status !== 'missing-source' || !pair.targetFile) return
+      const key = makeKey(pair.baseTitle, pair.episode)
+      const candidates = unprefixedByEpisode.get(key) ?? []
+      if (!candidates.length) return
+      pair.status = 'needs-manual-confirm'
+      pair.manualKey = `missing-source-${pair.baseTitle}-${pair.episode}`
+      pair.issues = [...(pair.issues ?? []), 'source missing prefix']
+      pair.sourceCandidates = candidates
+    })
+
+    pairs.sort((a, b) => (a.baseTitle + a.episode).localeCompare(b.baseTitle + b.episode))
+    return { fileInfos, pairs }
+  }
+
+  const inferEpisodeFromFileName = (value: string): string | null => {
+    const base = value.replace(/\.ass$/i, '').trim()
+    let match = base.match(/(?:\bEP\b|\bEpisode\b)\s*0*(\d{1,3})\b/i)
+    if (!match) {
+      match = base.match(/Part\s*\d+\s*-\s*0*(\d{1,3})\b/i)
+    }
+    if (!match) {
+      match = base.match(/-\s*0*(\d{1,3})\b$/i)
+    }
+    if (!match) return null
+    return match[1]
+  }
+
+  const addReviewedLine = (row: DialogRow): void => {
+    const sourceRaw = row.sourceRaw || row.source || ''
+    const targetRaw = row.target || ''
+    const sourceClean = stripAssFormatting(sourceRaw).trim()
+    const targetClean = stripAssFormatting(targetRaw).trim()
+    if (!sourceClean || !targetClean) {
+      appendTranslationLog('Reviewed: brak poprawnej pary source/target.')
+      return
+    }
+    const now = new Date().toISOString()
+    const seriesName = activeDiskProject?.title || seriesProjects.find(project => project.id === currentProjectId)?.title || null
+    const episode = inferEpisodeFromFileName(loadedFileName) || null
+    const entry: TranslationMemoryDatasetEntry = {
+      id: `${now}-${reviewedMemory.length + 1}`,
+      series: seriesName,
+      episode,
+      source: sourceClean,
+      target: targetClean,
+      sourceNormalized: normalizeDatasetText(sourceRaw),
+      targetNormalized: normalizeDatasetText(targetRaw),
+      character: row.character?.trim() || null,
+      speakerRaw: row.character?.trim() || null,
+      quality: 'trusted',
+      sourceQuality: 'reviewed_manual',
+      origin: 'manual_reviewed',
+      groupName: null,
+      createdAt: now,
+      reviewed: true,
+      sourceRaw,
+      targetRaw,
+    }
+    const merged = mergeDatasetEntries(reviewedMemory, [entry])
+    setReviewedMemory(merged)
+    void persistReviewedMemoryToDisk(merged)
+    appendTranslationLog(`Reviewed: dodano linie ${row.id} do bazy reviewed.`)
   }
 
   class ProviderError extends Error {
@@ -7110,8 +8264,12 @@ export default function App(): React.ReactElement {
         onSaveFile={() => { void handleSaveFile() }}
         onOpenApi={() => setApiOpen(true)}
         onOpenCharacters={handleOpenCharactersModal}
-        onOpenMemory={() => setMemoryOpen(true)}
+        onOpenMemory={() => {
+          setMemoryModalInitialTab('browse')
+          setMemoryOpen(true)
+        }}
         onOpenGenderCorrection={() => setGenderCorrectionOpen(true)}
+        onOpenBatchImport={() => { void handleOpenBatchImport() }}
         onTranslateAll={handleTranslateAll}
         onTranslateSelected={handleTranslateSelected}
         onStopTranslate={handleStopTranslate}
@@ -7129,7 +8287,10 @@ export default function App(): React.ReactElement {
         <LeftSidebar
           onOpenApi={() => setApiOpen(true)}
           onOpenCharacters={handleOpenCharactersModal}
-          onOpenMemory={() => setMemoryOpen(true)}
+          onOpenMemory={() => {
+            setMemoryModalInitialTab('browse')
+            setMemoryOpen(true)
+          }}
           onOpenGenderCorrection={() => setGenderCorrectionOpen(true)}
           onLoadVideo={() => { void handleOpenVideoFile() }}
           videoRef={videoRef}
@@ -7204,7 +8365,7 @@ export default function App(): React.ReactElement {
               <div>Prompt hint: <span style={{ color: C.textDim }}>{selectedCharacter.profile.customPromptHint || '-'}</span></div>
             </div>
           )}
-          <EditorPanel row={selectedRow} onChangeTarget={handleChangeLineTarget} />
+          <EditorPanel row={selectedRow} onChangeTarget={handleChangeLineTarget} onAddReviewed={addReviewedLine} />
           <SuggestionsPanel
             row={selectedRow}
             suggestions={suggestions}
@@ -7262,7 +8423,55 @@ export default function App(): React.ReactElement {
         onSave={saveStyles}
         onProjectMetaUpdate={handleProjectMetaUpdate}
       />
-      <MemoryModal open={isMemoryOpen} currentProjectId={currentProjectId} store={memoryStore} onClose={() => setMemoryOpen(false)} onChange={handleMemoryStoreChange} />
+      <MemoryModal
+        open={isMemoryOpen}
+        currentProjectId={currentProjectId}
+        initialTab={memoryModalInitialTab}
+        store={memoryStore}
+        hasActiveDiskProject={!!activeDiskProject}
+        projectImportedCount={projectImportedMemory.length}
+        globalImportedCount={globalImportedMemory.length}
+        reviewedCount={reviewedMemory.length}
+        dialoguePatternCount={dialoguePatterns.length}
+        onClose={() => setMemoryOpen(false)}
+        onChange={handleMemoryStoreChange}
+        onImportDataset={importTranslationDataset}
+        onExportGlobalDataset={exportGlobalDataset}
+        onImportGlobalDataset={importGlobalDatasetFile}
+        onExportReviewedMemory={exportReviewedMemory}
+        onImportReviewedMemory={importReviewedMemoryFile}
+      />
+      <BatchImportModal
+        open={isBatchImportOpen}
+        folderPath={batchImportFolder}
+        files={batchImportFiles}
+        pairs={batchImportPairs}
+        statusText={batchImportStatusText}
+        recursive={batchImportRecursive}
+        scope={batchImportScope}
+        sourceQuality={batchImportSourceQuality}
+        qualityMode={batchImportQualityMode}
+        includeLowConfidence={batchImportIncludeLow}
+        saveReport={batchImportSaveReport}
+        groupName={batchImportGroupName}
+        manualPairs={batchImportManualPairs}
+        onClose={() => setBatchImportOpen(false)}
+        onRescan={(recursive) => { void scanBatchImportFolder(batchImportFolder, recursive) }}
+        onRunImport={() => { void runBatchImport() }}
+        onChangeRecursive={setBatchImportRecursive}
+        onChangeScope={setBatchImportScope}
+        onChangeSourceQuality={setBatchImportSourceQuality}
+        onChangeQualityMode={setBatchImportQualityMode}
+        onChangeIncludeLow={setBatchImportIncludeLow}
+        onChangeSaveReport={setBatchImportSaveReport}
+        onChangeGroupName={setBatchImportGroupName}
+        onUpdateManualPair={(key, next) => {
+          setBatchImportManualPairs(prev => ({
+            ...prev,
+            [key]: { ...prev[key], ...next },
+          }))
+        }}
+      />
       <GenderCorrectionModal
         open={isGenderCorrectionOpen}
         rows={rowsData}

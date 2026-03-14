@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeTranslationMemoryEntries, resolveTranslationMemoryEntry } from './translationMemoryEngine'
+import { mergeTranslationMemoryEntries, resolveTranslationMemoryEntry, resolveTranslationMemoryWithPriority } from './translationMemoryEngine'
 
 describe('translationMemoryEngine', () => {
   it('resolves memory entry by normalized key', () => {
@@ -20,5 +20,13 @@ describe('translationMemoryEngine', () => {
     ]
     const merged = mergeTranslationMemoryEntries(existing, incoming, 'P1')
     expect(merged.length).toBe(2)
+  })
+
+  it('resolves memory with priority ordering', () => {
+    const reviewed = [{ source: 'Hello', target: 'Siema', usageCount: 5 }]
+    const project = [{ source: 'Hello', target: 'Cześć', usageCount: 10 }]
+    const global = [{ source: 'Hello', target: 'Witaj', usageCount: 1 }]
+    const match = resolveTranslationMemoryWithPriority('Hello', [reviewed, project, global])
+    expect(match?.target).toBe('Siema')
   })
 })

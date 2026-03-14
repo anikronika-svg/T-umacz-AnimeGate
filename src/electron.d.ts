@@ -417,6 +417,20 @@ declare global {
         ok: boolean
         error?: string
       }>
+      listAssFiles: (args: { dir: string; recursive?: boolean }) => Promise<{
+        ok: boolean
+        files?: string[]
+        error?: string
+      }>
+      readUserDataTextFile: (args: { relativePath: string }) => Promise<{
+        ok: boolean
+        content?: string
+        error?: string
+      }>
+      writeUserDataTextFile: (args: { relativePath: string; content: string }) => Promise<{
+        ok: boolean
+        error?: string
+      }>
       openDetachedPreviewWindow: () => Promise<{ ok: boolean }>
       closeDetachedPreviewWindow: () => Promise<{ ok: boolean }>
       updateDetachedPreviewState: (state: {

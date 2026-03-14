@@ -28,6 +28,21 @@ export function resolveTranslationMemoryEntry(
   return matches.sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0))[0]
 }
 
+export function resolveTranslationMemoryWithPriority(
+  source: string,
+  priorityLists: TranslationMemoryEntryLike[][],
+): TranslationMemoryEntryLike | null {
+  const key = normalizeMemoryKey(source)
+  if (!key) return null
+  for (const entries of priorityLists) {
+    if (!entries.length) continue
+    const matches = entries.filter(entry => normalizeMemoryKey(entry.source) === key)
+    if (!matches.length) continue
+    return matches.sort((a, b) => (b.usageCount ?? 0) - (a.usageCount ?? 0))[0]
+  }
+  return null
+}
+
 export function mergeTranslationMemoryEntries(
   existing: TranslationMemoryEntryLike[],
   incoming: TranslationMemoryEntryLike[],

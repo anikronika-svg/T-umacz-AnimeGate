@@ -241,6 +241,12 @@ const api = {
     ipcRenderer.invoke('project:readTextFile', args),
   writeProjectTextFile: (args: { projectDir: string; relativePath: string; content: string }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('project:writeTextFile', args),
+  listAssFiles: (args: { dir: string; recursive?: boolean }): Promise<{ ok: boolean; files?: string[]; error?: string }> =>
+    ipcRenderer.invoke('project:listAssFiles', args),
+  readUserDataTextFile: (args: { relativePath: string }): Promise<ProjectTextFileResult> =>
+    ipcRenderer.invoke('app:readUserDataFile', args),
+  writeUserDataTextFile: (args: { relativePath: string; content: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('app:writeUserDataFile', args),
   openDetachedPreviewWindow: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('preview:openWindow'),
   closeDetachedPreviewWindow: (): Promise<{ ok: boolean }> =>
