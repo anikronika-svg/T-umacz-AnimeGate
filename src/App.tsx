@@ -75,7 +75,8 @@ import {
 import { polishGrammarEngine } from './project/polishGrammarEngine'
 import { dialogueStyleEngine } from './project/dialogueStyleEngine'
 import { enforceProjectTerminology } from './project/terminologyEnforcer'
-import { guardLanguageLeaks } from './project/languageLeakGuard'
+import { guardLanguageLeaks, detectLanguageLeak } from './project/languageLeakGuard'
+import { normalizeLlmOutput } from './project/llmOutputNormalizer'
 import { validateTranslationQuality } from './project/translationQualityValidator'
 import { leakRepairEngine } from './project/leakRepairEngine'
 import { buildCharacterVoiceProfile } from './project/characterVoiceEngine'
@@ -261,6 +262,8 @@ interface DialogRow {
   readabilityReason?: string
   translationSource?: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'global_memory' | 'dialogue_patterns' | 'model' | 'terminology' | 'glossary' | 'copy' | 'failed_passthrough'
   translationFailureReason?: 'source-passthrough' | 'english-blocked' | 'mixed-blocked' | 'empty-response' | 'other'
+  translationQualityClass?: 'good' | 'usable' | 'weak' | 'failed'
+  translationQualityScore?: number
   tmMatchType?: 'exact' | 'pattern'
   tmConfidence?: number
 }
@@ -328,6 +331,9 @@ interface TranslationAttemptResult {
   readabilityTuned?: boolean
   readabilityReason?: string
   translationSource?: DialogRow['translationSource']
+  translationFailureReason?: DialogRow['translationFailureReason']
+  translationQualityClass?: DialogRow['translationQualityClass']
+  translationQualityScore?: DialogRow['translationQualityScore']
   tmMatchType?: DialogRow['tmMatchType']
   tmConfidence?: DialogRow['tmConfidence']
   engineUsed?: string
@@ -6640,7 +6646,7 @@ export default function App(): React.ReactElement {
 
   const extractOpenAiLikeText = (payload: unknown): string => {
     const data = payload as { choices?: Array<{ message?: { content?: string } }> }
-    return data.choices?.[0]?.message?.content?.trim() ?? ''
+    return normalizeLlmOutput(data.choices?.[0]?.message?.content ?? '')
   }
 
   const styleDirective = (style: TranslationStyleId): string => {
@@ -6709,6 +6715,25 @@ export default function App(): React.ReactElement {
     context?.styleContext ? `Style context:\n${context.styleContext}` : '',
   ].filter(Boolean).join('\n')
 
+  const buildLlmSystemPrompt = (source: string, target: string, context?: TranslationRequestContext): string => [
+    buildSystemPrompt(source, target, context),
+    'Output requirements:',
+    '- Output must be fully in Polish only.',
+    '- Do not include any English words, placeholders, or untranslated fragments.',
+    '- Preserve ASS tags (e.g., {\\i1}) and line breaks (\\N) exactly.',
+    '- Do not add quotes, bullets, labels, or explanations.',
+    '- Keep subtitle brevity and readability.',
+    '- Do not expand very short lines unless necessary for natural Polish.',
+    '- Preserve meaning exactly and keep the same intent and tone.',
+  ].join('\n')
+
+  const buildLlmUserPrompt = (text: string): string => [
+    'SUBTITLE LINE:',
+    text,
+    '',
+    'Return only the Polish translation line.',
+  ].join('\n')
+
   const translateViaOpenAiCompatible = async (
     endpoint: string,
     apiKey: string,
@@ -6731,8 +6756,8 @@ export default function App(): React.ReactElement {
         model,
         temperature: 0.1,
         messages: [
-          { role: 'system', content: buildSystemPrompt(source, target, context) },
-          { role: 'user', content: text },
+          { role: 'system', content: buildLlmSystemPrompt(source, target, context) },
+          { role: 'user', content: buildLlmUserPrompt(text) },
         ],
       }),
     }, 20000, signal)
@@ -6798,15 +6823,15 @@ export default function App(): React.ReactElement {
         model: CLAUDE_LOCKED_MODEL,
         max_tokens: 1024,
         temperature: 0.1,
-        system: buildSystemPrompt(source, target, context),
-        messages: [{ role: 'user', content: text }],
+        system: buildLlmSystemPrompt(source, target, context),
+        messages: [{ role: 'user', content: buildLlmUserPrompt(text) }],
       }),
     }, 20000, signal)
     if (response.status === 401 || response.status === 403) throw new ProviderError('invalid-api-key', `Claude: autoryzacja nieudana (HTTP ${response.status}).`)
     if (response.status === 429) throw new ProviderError('rate-limit', 'Claude: przekroczony limit zapytan (429).')
     if (!response.ok) throw new ProviderError('http-error', `Claude HTTP ${response.status}`)
     const data = await response.json() as { content?: Array<{ type?: string; text?: string }> }
-    const translated = data.content?.find(part => part.type === 'text')?.text?.trim() ?? ''
+    const translated = normalizeLlmOutput(data.content?.find(part => part.type === 'text')?.text ?? '')
     if (!translated) throw new ProviderError('empty-response', 'Claude zwrocil pusta odpowiedz')
     return translated
   }
@@ -6819,7 +6844,8 @@ export default function App(): React.ReactElement {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: `${buildSystemPrompt(source, target, context)}\n\n${text}` }] }],
+        systemInstruction: { parts: [{ text: buildLlmSystemPrompt(source, target, context) }] },
+        contents: [{ parts: [{ text: buildLlmUserPrompt(text) }] }],
         generationConfig: { temperature: 0.1 },
       }),
     }, 20000, signal)
@@ -6828,7 +6854,7 @@ export default function App(): React.ReactElement {
     if (response.status === 429) throw new ProviderError('rate-limit', 'Gemini: przekroczony limit zapytan (429).')
     if (!response.ok) throw new ProviderError('http-error', `Gemini HTTP ${response.status}`)
     const data = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
-    const translated = data.candidates?.[0]?.content?.parts?.map(part => part.text ?? '').join('').trim() ?? ''
+    const translated = normalizeLlmOutput(data.candidates?.[0]?.content?.parts?.map(part => part.text ?? '').join('') ?? '')
     if (!translated) throw new ProviderError('empty-response', 'Gemini zwrocil pusta odpowiedz')
     return translated
   }
@@ -6845,15 +6871,15 @@ export default function App(): React.ReactElement {
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        preamble: buildSystemPrompt(source, target, context),
-        message: text,
+        preamble: buildLlmSystemPrompt(source, target, context),
+        message: buildLlmUserPrompt(text),
       }),
     }, 20000, signal)
     if (response.status === 401 || response.status === 403) throw new ProviderError('invalid-api-key', `Cohere: autoryzacja nieudana (HTTP ${response.status}).`)
     if (response.status === 429) throw new ProviderError('rate-limit', 'Cohere: przekroczony limit zapytan (429).')
     if (!response.ok) throw new ProviderError('http-error', `Cohere HTTP ${response.status}`)
     const data = await response.json() as { text?: string }
-    const translated = data.text?.trim() ?? ''
+    const translated = normalizeLlmOutput(data.text ?? '')
     if (!translated) throw new ProviderError('empty-response', 'Cohere zwrocil pusta odpowiedz')
     return translated
   }
@@ -7177,6 +7203,27 @@ export default function App(): React.ReactElement {
     return { translated: tuned.value, tuned: tuned.tuned, reason: tuned.reason }
   }
 
+  const deriveQualityClass = (
+    translated: string,
+    row: DialogRow,
+  ): { qualityClass: DialogRow['translationQualityClass']; qualityScore: number } => {
+    const detection = detectLanguageLeak(translated, { terms: projectTerms })
+    const quality = validateTranslationQuality(row.sourceRaw || row.source, translated, { terms: projectTerms })
+    const score = quality.confidence
+    const hasCritical = detection.englishTokens.length > 0 || detection.mixed || quality.issues.some(issue => (
+      issue.type === 'english-leak'
+      || issue.type === 'mixed-language'
+      || issue.type === 'terminology-inconsistent'
+      || issue.type === 'grammar-anomaly'
+    ))
+    if (hasCritical) {
+      return { qualityClass: 'weak', qualityScore: score }
+    }
+    if (score >= 0.85) return { qualityClass: 'good', qualityScore: score }
+    if (score >= 0.7) return { qualityClass: 'usable', qualityScore: score }
+    return { qualityClass: 'weak', qualityScore: score }
+  }
+
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
     const logDiagnostic = (payload: { lineId: number; engine: string; status: 'success' | 'error' | 'skipped'; responseLength?: number; errorMessage?: string }): void => {
       if (!translationDiagnosticsEnabled) return
@@ -7206,14 +7253,19 @@ export default function App(): React.ReactElement {
           requiresManualCheck: true,
           translationSource: 'failed_passthrough',
           translationFailureReason: finalClassification,
+          translationQualityClass: 'failed',
+          translationQualityScore: 0,
         }
       }
+      const qualityMeta = deriveQualityClass(translated, row)
       return {
         translated,
         requiresManualCheck: false,
         translationSource: meta.translationSource,
         tmMatchType: meta.tmMatchType,
         tmConfidence: meta.tmConfidence,
+        translationQualityClass: qualityMeta.qualityClass,
+        translationQualityScore: qualityMeta.qualityScore,
       }
     }
 
@@ -7410,6 +7462,8 @@ export default function App(): React.ReactElement {
         readabilityReason: readability.reason,
         translationSource: 'failed_passthrough',
         translationFailureReason: finalClassification,
+        translationQualityClass: 'failed',
+        translationQualityScore: 0,
         engineUsed,
         latencyMs,
       }
@@ -7417,6 +7471,7 @@ export default function App(): React.ReactElement {
     if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
       appendTranslationLog(`Linia ${row.id}: wynik podejrzany (identyczny z oryginalem, ${sourceLang}->${targetLang})`)
     }
+    const qualityMeta = deriveQualityClass(translated, row)
     return {
       translated,
       requiresManualCheck,
@@ -7429,6 +7484,8 @@ export default function App(): React.ReactElement {
       readabilityTuned: readability.tuned,
       readabilityReason: readability.reason,
       translationSource: 'model',
+      translationQualityClass: qualityMeta.qualityClass,
+      translationQualityScore: qualityMeta.qualityScore,
       tmConfidence: latencyMs ? Math.max(0.4, Math.min(1, 1 - latencyMs / 60000)) : 0.5,
       engineUsed,
       latencyMs,
@@ -7675,6 +7732,8 @@ export default function App(): React.ReactElement {
               const readabilityMetaById = new Map<number, { readabilityTuned: boolean; readabilityReason: string }>()
               const sourceMetaById = new Map<number, { translationSource: DialogRow['translationSource'] }>()
               const failureMetaById = new Map<number, DialogRow['translationFailureReason']>()
+              const qualityClassById = new Map<number, DialogRow['translationQualityClass']>()
+              const qualityScoreById = new Map<number, DialogRow['translationQualityScore']>()
               const perLineLatency = Math.max(1, Math.floor((Date.now() - batchStart) / Math.max(1, toTranslate.length)))
               for (let index = 0; index < toTranslate.length; index += 1) {
                 const row = toTranslate[index]
@@ -7715,11 +7774,16 @@ export default function App(): React.ReactElement {
                   qualityById.set(row.id, true)
                   sourceMetaById.set(row.id, { translationSource: 'failed_passthrough' })
                   failureMetaById.set(row.id, finalClassification)
+                  qualityClassById.set(row.id, 'failed')
+                  qualityScoreById.set(row.id, 0)
                   logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'error', responseLength: translated.length, errorMessage: `blocked:${finalClassification}` })
                   recordEngineStat('deepl', 'error')
                   recordResult(row.id, 'error', `blocked:${finalClassification}`)
                 } else {
                   sourceMetaById.set(row.id, { translationSource: 'model' })
+                  const qualityMeta = deriveQualityClass(translated, row)
+                  qualityClassById.set(row.id, qualityMeta.qualityClass)
+                  qualityScoreById.set(row.id, qualityMeta.qualityScore)
                   logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'success', responseLength: translated.length })
                   recordEngineStat('deepl', 'success', perLineLatency)
                   recordResult(row.id, 'done')
@@ -7754,6 +7818,8 @@ export default function App(): React.ReactElement {
                     readabilityReason: readabilityMetaById.get(item.id)?.readabilityReason,
                     translationSource: sourceMetaById.get(item.id)?.translationSource,
                     translationFailureReason: failureMetaById.get(item.id),
+                    translationQualityClass: qualityClassById.get(item.id),
+                    translationQualityScore: qualityScoreById.get(item.id),
                   }
                   : item
               )))
@@ -7802,6 +7868,8 @@ export default function App(): React.ReactElement {
                   tmMatchType: result.tmMatchType,
                   tmConfidence: result.tmConfidence,
                   translationFailureReason: result.translationFailureReason,
+                  translationQualityClass: result.translationQualityClass,
+                  translationQualityScore: result.translationQualityScore,
                 }
                 : item
             )))
@@ -7831,6 +7899,8 @@ export default function App(): React.ReactElement {
                   requiresManualCheck: true,
                   translationSource: 'failed_passthrough',
                   translationFailureReason: 'source-passthrough',
+                  translationQualityClass: 'failed',
+                  translationQualityScore: 0,
                 }
                 : item
             )))
@@ -7893,6 +7963,8 @@ export default function App(): React.ReactElement {
                   tmMatchType: result.tmMatchType,
                   tmConfidence: result.tmConfidence,
                   translationFailureReason: result.translationFailureReason,
+                  translationQualityClass: result.translationQualityClass,
+                  translationQualityScore: result.translationQualityScore,
                 }
                 : item
             )))
@@ -7956,6 +8028,8 @@ export default function App(): React.ReactElement {
                   requiresManualCheck: true,
                   translationSource: 'failed_passthrough',
                   translationFailureReason: 'source-passthrough',
+                  translationQualityClass: 'failed',
+                  translationQualityScore: 0,
                 }
                 : item
             )))
@@ -7994,11 +8068,22 @@ export default function App(): React.ReactElement {
         manualCheck: 0,
         repaired: 0,
       }
+      const qualityCounters = {
+        good: 0,
+        usable: 0,
+        weak: 0,
+        failed: 0,
+      }
       completedWithOutputIds.forEach(id => {
         const row = finalRowsById.get(id)
         if (!row) return
         if (row.requiresManualCheck) sourceCounters.manualCheck += 1
         if (row.repairSucceeded) sourceCounters.repaired += 1
+        if (row.translationQualityClass) {
+          qualityCounters[row.translationQualityClass] += 1
+        } else if (row.translationSource === 'failed_passthrough') {
+          qualityCounters.failed += 1
+        }
         switch (row.translationSource) {
           case 'reviewed_manual':
             sourceCounters.reviewed += 1
@@ -8034,6 +8119,9 @@ export default function App(): React.ReactElement {
       appendTranslationLog(`Walidacja: oczekiwane=${translatableIds.length}, z-wynikiem=${completedWithOutputIds.length}, braki=${missingTranslationIds.length}, checksum=${checksum}`)
       appendTranslationLog(
         `Zrodla: reviewed=${sourceCounters.reviewed}, trusted=${sourceCounters.trusted}, project=${sourceCounters.project}, global=${sourceCounters.global}, patterns=${sourceCounters.patterns}, model=${sourceCounters.model}, manualCheck=${sourceCounters.manualCheck}, repaired=${sourceCounters.repaired}${sourceCounters.otherRule ? `, otherRule=${sourceCounters.otherRule}` : ''}`
+      )
+      appendTranslationLog(
+        `Quality: good=${qualityCounters.good}, usable=${qualityCounters.usable}, weak=${qualityCounters.weak}, failed=${qualityCounters.failed}`
       )
       if (engineStats.size > 0) {
         const engineParts = [...engineStats.entries()].map(([engine, stat]) => {
