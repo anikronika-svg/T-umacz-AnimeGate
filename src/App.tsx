@@ -92,6 +92,7 @@ import {
   type DialoguePatternEntry,
   type TranslationMemoryDatasetEntry,
 } from './project/translationMemoryDataset'
+import { runProviderChain, isEmptyTranslation } from './project/translationRetry'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -7249,76 +7250,64 @@ export default function App(): React.ReactElement {
       .filter(provider => provider !== providerId)
     const providersToTry = mode === 'fallback' ? fallbackProviders : [providerId, ...fallbackProviders]
 
-    const attemptTranslateWithProvider = async (provider: string): Promise<string> => {
-      engineUsed = provider
-      const startedAt = Date.now()
-      for (let attempt = 0; attempt <= backoffMs.length; attempt += 1) {
-        try {
-          const waitMs = providerCooldownUntilRef.current - Date.now()
-          if (waitMs > 0) {
-            appendTranslationLog(`Czekam ${Math.ceil(waitMs / 1000)}s na odblokowanie limitu providera...`)
-            await waitWithAbort(waitMs, controller.signal)
-          }
-          const textForTranslation = row.sourceRaw || row.source
-          const translatedText = await translateSubtitleLinePreservingTags(
-            textForTranslation,
-            provider === 'deepl' ? sourceLang : 'auto',
-            targetLang,
-            controller.signal,
-            context,
-            async (chunkText, _source, target, signal) => translateViaEngineForProvider(provider, chunkText, _source, target, signal, context),
-          )
-          latencyMs = Date.now() - startedAt
-          if (!translatedText.trim()) {
-            throw new ProviderError('empty-response', `Provider ${provider} zwrocil pusty wynik.`)
-          }
-          logDiagnostic({ lineId: row.id, engine: provider, status: 'success', responseLength: translatedText.length })
-          return translatedText
-        } catch (error) {
-          const message = error instanceof ProviderError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : 'Nieznany blad'
-          if (error instanceof ProviderError && (error.code === 'missing-api-key' || error.code === 'unsupported-language-pair')) {
-            throw error
-          }
-          const isRetryable = error instanceof ProviderError
-            && (error.code === 'rate-limit' || error.code === 'timeout' || error.code === 'network' || error.code.startsWith('econn') || error.code === 'empty-response')
-          if (!isRetryable || attempt >= backoffMs.length) {
-            logDiagnostic({ lineId: row.id, engine: provider, status: 'error', responseLength: 0, errorMessage: message })
-            throw error
-          }
-          const delay = error instanceof ProviderError
-            ? deriveRetryDelayMs(error, backoffMs[attempt])
-            : backoffMs[attempt]
-          if (error instanceof ProviderError && error.code === 'rate-limit') {
-            providerCooldownUntilRef.current = Date.now() + delay
-          }
-          appendTranslationLog(`Retry linii ${row.id} (${attempt + 1}/${backoffMs.length}) po bledzie: ${message}`)
-          await waitWithAbort(delay, controller.signal)
-        }
-      }
-      throw new ProviderError('empty-response', `Provider ${provider} zwrocil pusty wynik.`)
-    }
-
-    let lastError: unknown = null
-    for (const provider of providersToTry) {
-      if (stopTranslationRef.current) break
+    const eligibleProviders = providersToTry.filter(provider => {
       try {
+        ensureSupportedLanguagePair(provider, provider === 'deepl' ? sourceLang : 'auto', targetLang)
         if (!['libre', 'mymemory'].includes(provider)) {
           ensureProviderReady(provider)
         }
-        translated = await attemptTranslateWithProvider(provider)
-        break
+        return true
       } catch (error) {
-        if (error instanceof ProviderError && (error.code === 'missing-api-key' || error.code === 'unsupported-language-pair')) {
-          logDiagnostic({ lineId: row.id, engine: provider, status: 'skipped', responseLength: 0, errorMessage: error.message })
-          continue
-        }
-        lastError = error
+        const message = error instanceof ProviderError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : 'Nieznany blad'
+        logDiagnostic({ lineId: row.id, engine: provider, status: 'skipped', responseLength: 0, errorMessage: message })
+        return false
       }
+    })
+
+    const textForTranslation = row.sourceRaw || row.source
+    if (!eligibleProviders.length) {
+      activeTranslationAbortRef.current = null
+      throw new ProviderError('missing-api-key', 'Brak dostepnych providerow do tlumaczenia.')
     }
+    const chainResult = await runProviderChain(
+      eligibleProviders,
+      async (provider) => {
+        const sourceForProvider = provider === 'deepl' ? sourceLang : 'auto'
+        return translateSubtitleLinePreservingTags(
+          textForTranslation,
+          sourceForProvider,
+          targetLang,
+          controller.signal,
+          context,
+          async (chunkText, _source, target, signal) => translateViaEngineForProvider(provider, chunkText, _source, target, signal, context),
+        )
+      },
+      {
+        maxRetries: backoffMs.length,
+        shouldRetry: (error) => error instanceof ProviderError
+          && (error.code === 'rate-limit' || error.code === 'timeout' || error.code === 'network' || error.code.startsWith('econn') || error.code === 'empty-response'),
+        shouldSkip: (error) => error instanceof ProviderError && (error.code === 'missing-api-key' || error.code === 'unsupported-language-pair'),
+        onAttempt: info => {
+          if (info.status === 'retry') {
+            appendTranslationLog(`Retry linii ${row.id} (${info.attempt}/${backoffMs.length}) po bledzie: ${info.errorMessage ?? 'unknown'}`)
+          }
+          logDiagnostic({
+            lineId: row.id,
+            engine: info.provider,
+            status: info.status === 'fallback' ? 'skipped' : info.status,
+            responseLength: info.responseLength,
+            errorMessage: info.errorMessage,
+          })
+        },
+      },
+    )
+    translated = chainResult.value
+    engineUsed = chainResult.provider
+    latencyMs = chainResult.latencyMs
 
     activeTranslationAbortRef.current = null
     if (!translated) {
-      throw (lastError instanceof Error ? lastError : new Error(`Brak odpowiedzi silnika (${sourceLang}->${targetLang})`))
+      throw new Error(`Brak odpowiedzi silnika (${sourceLang}->${targetLang})`)
     }
     const postProcessed = postProcessTranslation(row, translated, context)
     translated = postProcessed.translated
@@ -7593,6 +7582,14 @@ export default function App(): React.ReactElement {
             activeTranslationAbortRef.current = null
 
             if (translatedBatch && translatedBatch.length === toTranslate.length) {
+              const hasEmpty = translatedBatch.some(item => isEmptyTranslation(item))
+              if (hasEmpty) {
+                appendTranslationLog(`Batch ${batchIndex + 1}: wykryto puste odpowiedzi — fallback per-linia.`)
+                translatedBatch = null
+              }
+            }
+
+            if (translatedBatch && translatedBatch.length === toTranslate.length) {
               const byId = new Map<number, string>()
               const qualityById = new Map<number, boolean>()
               const repairMetaById = new Map<number, { repairAttempted: boolean; repairMode: 'safe_replace' | 'controlled_retry' | 'skipped'; repairReason: string; repairSucceeded: boolean }>()
@@ -7727,7 +7724,12 @@ export default function App(): React.ReactElement {
             recordResult(lineId, isRateLimit ? 'rate-limited' : 'error', diagnostic)
             setRowsData(prev => prev.map(item => (
               item.id === lineId
-                ? { ...item, pl: item.target?.trim() ? item.pl : 'empty' }
+                ? {
+                  ...item,
+                  target: item.target?.trim() ? item.target : (row?.source ?? item.source).trim(),
+                  pl: 'draft',
+                  requiresManualCheck: true,
+                }
                 : item
             )))
           }
@@ -7839,6 +7841,16 @@ export default function App(): React.ReactElement {
             recordEngineStat(providerId, 'error')
             appendTranslationLog(`Fallback linia ${lineId}: ${fallbackDiag}`)
             recordResult(lineId, 'error', fallbackDiag)
+            setRowsData(prev => prev.map(item => (
+              item.id === lineId
+                ? {
+                  ...item,
+                  target: item.target?.trim() ? item.target : (row?.source ?? item.source).trim(),
+                  pl: 'draft',
+                  requiresManualCheck: true,
+                }
+                : item
+            )))
           }
           }
           if (!stopTranslationRef.current) {
