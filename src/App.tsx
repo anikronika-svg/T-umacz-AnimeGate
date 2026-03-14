@@ -93,6 +93,7 @@ import {
   type TranslationMemoryDatasetEntry,
 } from './project/translationMemoryDataset'
 import { runProviderChain, isEmptyTranslation } from './project/translationRetry'
+import { guardTranslationOutput } from './project/translationOutputGuard'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -258,7 +259,8 @@ interface DialogRow {
   sceneToneSummary?: string
   readabilityTuned?: boolean
   readabilityReason?: string
-  translationSource?: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'global_memory' | 'dialogue_patterns' | 'model' | 'terminology' | 'glossary' | 'copy'
+  translationSource?: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'global_memory' | 'dialogue_patterns' | 'model' | 'terminology' | 'glossary' | 'copy' | 'failed_passthrough'
+  translationFailureReason?: 'source-passthrough' | 'english-blocked' | 'mixed-blocked' | 'empty-response' | 'other'
   tmMatchType?: 'exact' | 'pattern'
   tmConfidence?: number
 }
@@ -4320,7 +4322,13 @@ function LinesView({
               <span style={{ fontSize: 11, color: row.character ? C.accentY : C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.character || ''}</span>
               <span style={{ fontSize: 12, color: C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.source}</span>
               <span style={{ fontSize: 12, color: row.requiresManualCheck ? C.accentY : (row.target ? C.text : C.textDim), fontStyle: row.target ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {row.requiresManualCheck ? '⚠ ' : ''}
+                {row.translationSource === 'failed_passthrough'
+                  ? row.translationFailureReason === 'english-blocked'
+                    ? '[ENGLISH BLOCKED] '
+                    : row.translationFailureReason === 'mixed-blocked'
+                      ? '[MIXED BLOCKED] '
+                      : '[SOURCE PASSTHROUGH] '
+                  : row.requiresManualCheck ? '⚠ ' : ''}
                 {row.target || ''}
               </span>
             </div>
@@ -6996,6 +7004,7 @@ export default function App(): React.ReactElement {
 
   const lineHasTranslatedContent = (row: DialogRow | undefined): boolean => {
     if (!row) return false
+    if (row.translationSource === 'failed_passthrough') return false
     const plain = stripAssFormatting(row.target ?? '').trim()
     if (plain.length > 0) return true
     const tokens = tokenizeSubtitleText(row.target ?? '')
@@ -7176,41 +7185,75 @@ export default function App(): React.ReactElement {
       appendTranslationLog(`[diag] line=${lineId} engine=${engine} status=${status} len=${len}${errorMessage ? ` err=${errorMessage}` : ''}`)
     }
 
+    const applyOutputGuard = (
+      translated: string,
+      engineLabel: string,
+      meta: { translationSource: DialogRow['translationSource']; tmMatchType?: DialogRow['tmMatchType']; tmConfidence?: number },
+    ): TranslationAttemptResult => {
+      const guardResult = guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
+      if (!guardResult.ok) {
+        const finalClassification = guardResult.reason ?? 'other'
+        const prefix = finalClassification === 'source-passthrough'
+          ? 'SOURCE_PASSTHROUGH_BLOCKED'
+          : finalClassification === 'mixed-blocked'
+            ? 'ENGLISH_OUTPUT_BLOCKED'
+            : 'ENGLISH_OUTPUT_BLOCKED'
+        appendTranslationLog(`${prefix} line=${row.id} reason=${finalClassification} sameAsSource=${guardResult.sameAsSource} englishLeak=${guardResult.englishLeakDetected} targetPreview="${guardResult.targetPreview}"`)
+        appendTranslationLog(`NOT_COUNTED_AS_SUCCESS line=${row.id} classification=${finalClassification}`)
+        logDiagnostic({ lineId: row.id, engine: engineLabel, status: 'error', responseLength: translated.length, errorMessage: `blocked:${finalClassification}` })
+        return {
+          translated: translated.trim() ? translated : (row.sourceRaw || row.source),
+          requiresManualCheck: true,
+          translationSource: 'failed_passthrough',
+          translationFailureReason: finalClassification,
+        }
+      }
+      return {
+        translated,
+        requiresManualCheck: false,
+        translationSource: meta.translationSource,
+        tmMatchType: meta.tmMatchType,
+        tmConfidence: meta.tmConfidence,
+      }
+    }
+
     const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
     if (termMatch && mode === 'primary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano termin ze slownika projektu.`)
-      logDiagnostic({ lineId: row.id, engine: 'terminology', status: 'skipped', responseLength: termMatch.length })
-      return { translated: termMatch, requiresManualCheck: false, translationSource: 'terminology' }
+      const guarded = applyOutputGuard(termMatch, 'terminology', { translationSource: 'terminology' })
+      if (guarded.translationSource !== 'failed_passthrough') {
+        logDiagnostic({ lineId: row.id, engine: 'terminology', status: 'skipped', responseLength: guarded.translated.length })
+      }
+      return guarded
     }
     const fromMemory = resolveMemoryTranslation(row)
     if (fromMemory && mode === 'primary') {
-      logDiagnostic({ lineId: row.id, engine: fromMemory.source ?? 'memory', status: 'skipped', responseLength: fromMemory.value.length })
-      return {
-        translated: fromMemory.value,
-        requiresManualCheck: false,
+      const guarded = applyOutputGuard(fromMemory.value, fromMemory.source ?? 'memory', {
         translationSource: fromMemory.source,
         tmMatchType: fromMemory.tmMatchType,
         tmConfidence: fromMemory.tmConfidence,
+      })
+      if (guarded.translationSource !== 'failed_passthrough') {
+        logDiagnostic({ lineId: row.id, engine: fromMemory.source ?? 'memory', status: 'skipped', responseLength: guarded.translated.length })
       }
+      return guarded
     }
     const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
     if (classification.kind === 'glossary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano glosariusz — uzywam preferowanego tlumaczenia.`)
-      logDiagnostic({ lineId: row.id, engine: 'glossary', status: 'skipped', responseLength: (classification.preferred ?? row.source).trim().length })
-      return {
-        translated: (classification.preferred ?? row.source).trim(),
-        requiresManualCheck: false,
-        translationSource: 'glossary',
+      const guarded = applyOutputGuard((classification.preferred ?? row.source).trim(), 'glossary', { translationSource: 'glossary' })
+      if (guarded.translationSource !== 'failed_passthrough') {
+        logDiagnostic({ lineId: row.id, engine: 'glossary', status: 'skipped', responseLength: guarded.translated.length })
       }
+      return guarded
     }
     if (classification.kind === 'copy') {
       appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — przepisuje 1:1 bez ostrzezenia.`)
-      logDiagnostic({ lineId: row.id, engine: 'copy', status: 'skipped', responseLength: row.source.trim().length })
-      return {
-        translated: row.source.trim(),
-        requiresManualCheck: false,
-        translationSource: 'copy',
+      const guarded = applyOutputGuard(row.source.trim(), 'copy', { translationSource: 'copy' })
+      if (guarded.translationSource !== 'failed_passthrough') {
+        logDiagnostic({ lineId: row.id, engine: 'copy', status: 'skipped', responseLength: guarded.translated.length })
       }
+      return guarded
     }
     const shouldWarnFromClassifier = classification.kind === 'warn'
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
@@ -7336,6 +7379,41 @@ export default function App(): React.ReactElement {
     const repairMeta = repairOutcome.repairMeta
     const readability = runReadabilityTuner(row, translated, requiresManualCheck)
     translated = readability.translated
+    const guardResult = guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
+    if (!guardResult.ok) {
+      requiresManualCheck = true
+      const finalClassification = guardResult.reason ?? 'other'
+      const prefix = finalClassification === 'source-passthrough'
+        ? 'SOURCE_PASSTHROUGH_BLOCKED'
+        : finalClassification === 'mixed-blocked'
+          ? 'ENGLISH_OUTPUT_BLOCKED'
+          : 'ENGLISH_OUTPUT_BLOCKED'
+      appendTranslationLog(`${prefix} line=${row.id} reason=${finalClassification} sameAsSource=${guardResult.sameAsSource} englishLeak=${guardResult.englishLeakDetected} targetPreview="${guardResult.targetPreview}"`)
+      appendTranslationLog(`NOT_COUNTED_AS_SUCCESS line=${row.id} classification=${finalClassification}`)
+      logDiagnostic({
+        lineId: row.id,
+        engine: engineUsed ?? providerId,
+        status: 'error',
+        responseLength: translated.length,
+        errorMessage: `blocked:${finalClassification}`,
+      })
+      return {
+        translated: translated.trim() ? translated : (row.sourceRaw || row.source),
+        requiresManualCheck: true,
+        repairMeta,
+        characterVoiceApplied: context.characterVoiceApplied,
+        characterVoiceSource: context.characterVoiceSource,
+        characterVoiceSummary: context.characterVoiceSummary,
+        sceneToneApplied: context.sceneToneApplied,
+        sceneToneSummary: context.sceneToneSummary,
+        readabilityTuned: readability.tuned,
+        readabilityReason: readability.reason,
+        translationSource: 'failed_passthrough',
+        translationFailureReason: finalClassification,
+        engineUsed,
+        latencyMs,
+      }
+    }
     if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
       appendTranslationLog(`Linia ${row.id}: wynik podejrzany (identyczny z oryginalem, ${sourceLang}->${targetLang})`)
     }
@@ -7596,6 +7674,7 @@ export default function App(): React.ReactElement {
               const voiceMetaById = new Map<number, { characterVoiceApplied: boolean; characterVoiceSource: string; characterVoiceSummary: string; sceneToneApplied: boolean; sceneToneSummary: string }>()
               const readabilityMetaById = new Map<number, { readabilityTuned: boolean; readabilityReason: string }>()
               const sourceMetaById = new Map<number, { translationSource: DialogRow['translationSource'] }>()
+              const failureMetaById = new Map<number, DialogRow['translationFailureReason']>()
               const perLineLatency = Math.max(1, Math.floor((Date.now() - batchStart) / Math.max(1, toTranslate.length)))
               for (let index = 0; index < toTranslate.length; index += 1) {
                 const row = toTranslate[index]
@@ -7608,7 +7687,6 @@ export default function App(): React.ReactElement {
                 if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
                   appendTranslationLog(`Linia ${row.id}: wynik podejrzany (batch, ${sourceLang}->${targetLang})`)
                 }
-                byId.set(row.id, translated)
                 if (leakGuard.requiresManualCheck) {
                   appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
                 }
@@ -7617,13 +7695,35 @@ export default function App(): React.ReactElement {
                 }
                 const repairOutcome = await runLeakRepair(row, translated, context, leakGuard, quality)
                 translated = repairOutcome.translated
-                byId.set(row.id, translated)
                 qualityById.set(row.id, repairOutcome.requiresManualCheck)
                 if (repairOutcome.repairMeta) {
                   repairMetaById.set(row.id, repairOutcome.repairMeta)
                 }
                 const readability = runReadabilityTuner(row, translated, repairOutcome.requiresManualCheck)
                 translated = readability.translated
+                const guardResult = guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
+                if (!guardResult.ok) {
+                  const finalClassification = guardResult.reason ?? 'other'
+                  const prefix = finalClassification === 'source-passthrough'
+                    ? 'SOURCE_PASSTHROUGH_BLOCKED'
+                    : finalClassification === 'mixed-blocked'
+                      ? 'ENGLISH_OUTPUT_BLOCKED'
+                      : 'ENGLISH_OUTPUT_BLOCKED'
+                  appendTranslationLog(`${prefix} line=${row.id} reason=${finalClassification} sameAsSource=${guardResult.sameAsSource} englishLeak=${guardResult.englishLeakDetected} targetPreview="${guardResult.targetPreview}"`)
+                  appendTranslationLog(`NOT_COUNTED_AS_SUCCESS line=${row.id} classification=${finalClassification}`)
+                  translated = (row.sourceRaw || row.source).trim()
+                  qualityById.set(row.id, true)
+                  sourceMetaById.set(row.id, { translationSource: 'failed_passthrough' })
+                  failureMetaById.set(row.id, finalClassification)
+                  logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'error', responseLength: translated.length, errorMessage: `blocked:${finalClassification}` })
+                  recordEngineStat('deepl', 'error')
+                  recordResult(row.id, 'error', `blocked:${finalClassification}`)
+                } else {
+                  sourceMetaById.set(row.id, { translationSource: 'model' })
+                  logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'success', responseLength: translated.length })
+                  recordEngineStat('deepl', 'success', perLineLatency)
+                  recordResult(row.id, 'done')
+                }
                 byId.set(row.id, translated)
                 readabilityMetaById.set(row.id, { readabilityTuned: readability.tuned, readabilityReason: readability.reason })
                 voiceMetaById.set(row.id, {
@@ -7633,10 +7733,6 @@ export default function App(): React.ReactElement {
                   sceneToneApplied: context.sceneToneApplied,
                   sceneToneSummary: context.sceneToneSummary,
                 })
-                sourceMetaById.set(row.id, { translationSource: 'model' })
-                logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'success', responseLength: translated.length })
-                recordEngineStat('deepl', 'success', perLineLatency)
-                recordResult(row.id, 'done')
               }
               setRowsData(prev => prev.map(item => (
                 byId.has(item.id)
@@ -7657,6 +7753,7 @@ export default function App(): React.ReactElement {
                     readabilityTuned: readabilityMetaById.get(item.id)?.readabilityTuned ?? false,
                     readabilityReason: readabilityMetaById.get(item.id)?.readabilityReason,
                     translationSource: sourceMetaById.get(item.id)?.translationSource,
+                    translationFailureReason: failureMetaById.get(item.id),
                   }
                   : item
               )))
@@ -7704,6 +7801,7 @@ export default function App(): React.ReactElement {
                   translationSource: result.translationSource,
                   tmMatchType: result.tmMatchType,
                   tmConfidence: result.tmConfidence,
+                  translationFailureReason: result.translationFailureReason,
                 }
                 : item
             )))
@@ -7721,6 +7819,8 @@ export default function App(): React.ReactElement {
             logDiagnostic({ lineId, engine: providerId, status: 'error', responseLength: 0, errorMessage: diagnostic })
             recordEngineStat(providerId, 'error')
             appendTranslationLog(`Linia ${lineId}: ${diagnostic}`)
+            appendTranslationLog(`FAILED_SOURCE_FALLBACK line=${lineId} reason=error targetPreview="${(row?.source ?? item.source).slice(0, 120)}"`)
+            appendTranslationLog(`NOT_COUNTED_AS_SUCCESS line=${lineId} classification=failed_source_fallback`)
             recordResult(lineId, isRateLimit ? 'rate-limited' : 'error', diagnostic)
             setRowsData(prev => prev.map(item => (
               item.id === lineId
@@ -7729,6 +7829,8 @@ export default function App(): React.ReactElement {
                   target: item.target?.trim() ? item.target : (row?.source ?? item.source).trim(),
                   pl: 'draft',
                   requiresManualCheck: true,
+                  translationSource: 'failed_passthrough',
+                  translationFailureReason: 'source-passthrough',
                 }
                 : item
             )))
@@ -7790,6 +7892,7 @@ export default function App(): React.ReactElement {
                   translationSource: result.translationSource,
                   tmMatchType: result.tmMatchType,
                   tmConfidence: result.tmConfidence,
+                  translationFailureReason: result.translationFailureReason,
                 }
                 : item
             )))
@@ -7828,6 +7931,7 @@ export default function App(): React.ReactElement {
                   translationSource: result.translationSource,
                   tmMatchType: result.tmMatchType,
                   tmConfidence: result.tmConfidence,
+                  translationFailureReason: result.translationFailureReason,
                 }
                 : item
             )))
@@ -7840,6 +7944,8 @@ export default function App(): React.ReactElement {
             logDiagnostic({ lineId, engine: providerId, status: 'error', responseLength: 0, errorMessage: fallbackDiag })
             recordEngineStat(providerId, 'error')
             appendTranslationLog(`Fallback linia ${lineId}: ${fallbackDiag}`)
+            appendTranslationLog(`FAILED_SOURCE_FALLBACK line=${lineId} reason=fallback_error targetPreview="${(row?.source ?? item.source).slice(0, 120)}"`)
+            appendTranslationLog(`NOT_COUNTED_AS_SUCCESS line=${lineId} classification=failed_source_fallback`)
             recordResult(lineId, 'error', fallbackDiag)
             setRowsData(prev => prev.map(item => (
               item.id === lineId
@@ -7848,6 +7954,8 @@ export default function App(): React.ReactElement {
                   target: item.target?.trim() ? item.target : (row?.source ?? item.source).trim(),
                   pl: 'draft',
                   requiresManualCheck: true,
+                  translationSource: 'failed_passthrough',
+                  translationFailureReason: 'source-passthrough',
                 }
                 : item
             )))
