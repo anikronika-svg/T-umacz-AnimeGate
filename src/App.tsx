@@ -327,6 +327,8 @@ interface TranslationAttemptResult {
   translationSource?: DialogRow['translationSource']
   tmMatchType?: DialogRow['tmMatchType']
   tmConfidence?: DialogRow['tmConfidence']
+  engineUsed?: string
+  latencyMs?: number
 }
 
 const DEFAULT_TRANSLATION_BATCH_SIZE = 20
@@ -1145,6 +1147,8 @@ interface ActionBarProps {
   onTranslateAll: () => void
   onTranslateSelected: () => void
   onStopTranslate: () => void
+  diagnosticsEnabled: boolean
+  onChangeDiagnosticsEnabled: (next: boolean) => void
   isTranslating: boolean
   selectedCount: number
   sourceLang: string
@@ -1163,6 +1167,8 @@ function ActionBar({
   onTranslateSelected,
   onStopTranslate,
   onOpenBatchImport,
+  diagnosticsEnabled,
+  onChangeDiagnosticsEnabled,
   isTranslating,
   selectedCount,
   sourceLang,
@@ -1229,6 +1235,10 @@ function ActionBar({
       >
         Stop
       </button>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: C.textDim }}>
+        <input type="checkbox" checked={diagnosticsEnabled} onChange={e => onChangeDiagnosticsEnabled(e.currentTarget.checked)} />
+        diag
+      </label>
       <button style={BASE_BTN} onClick={onOpenBatchImport}>
         Import bazy z folderu
       </button>
@@ -4388,6 +4398,7 @@ export default function App(): React.ReactElement {
   const [batchImportSaveReport, setBatchImportSaveReport] = useState<boolean>(true)
   const [batchImportGroupName, setBatchImportGroupName] = useState<string>('')
   const [batchImportManualPairs, setBatchImportManualPairs] = useState<Record<string, { sourceFile?: string; targetFile?: string }>>({})
+  const [translationDiagnosticsEnabled, setTranslationDiagnosticsEnabled] = useState<boolean>(true)
   const [activeDiskProject, setActiveDiskProject] = useState<ActiveDiskProject | null>(null)
   const [projectLineAssignments, setProjectLineAssignments] = useState<ProjectLineAssignment[]>([])
   const [activeAssignmentCharacter, setActiveAssignmentCharacter] = useState('')
@@ -6908,6 +6919,40 @@ export default function App(): React.ReactElement {
     )
   }
 
+  const translateViaEngineForProvider = async (
+    provider: string,
+    text: string,
+    source: string,
+    target: string,
+    signal: AbortSignal,
+    context?: TranslationRequestContext,
+  ): Promise<string> => {
+    if (!text.trim()) return ''
+    if (source === target) return text
+    ensureSupportedLanguagePair(provider, source, target)
+    if (provider === 'mymemory') return translateViaMyMemory(text, source, target, signal)
+    if (provider === 'libre') return translateViaLibre(text, source, target, signal)
+    if (provider === 'deepl') return translateViaDeepL(text, source, target, signal, undefined, context)
+    if (provider === 'openai') return translateViaOpenAi(text, source, target, signal, resolveModelForProvider('openai'), context)
+    if (provider === 'openrouter') return translateViaOpenRouter(text, source, target, signal, resolveModelForProvider('openrouter'), context)
+    if (provider === 'groq') return translateViaGroq(text, source, target, signal, resolveModelForProvider('groq'), context)
+    if (provider === 'together') return translateViaTogether(text, source, target, signal, resolveModelForProvider('together'), context)
+    if (provider === 'mistral') return translateViaMistral(text, source, target, signal, resolveModelForProvider('mistral'), context)
+    if (provider === 'claude') return translateViaClaude(text, source, target, signal, context)
+    if (provider === 'gemini') return translateViaGemini(text, source, target, signal, resolveModelForProvider('gemini'), context)
+    if (provider === 'cohere') return translateViaCohere(text, source, target, signal, resolveModelForProvider('cohere'), context)
+    if (provider === 'google') return translateViaGoogleV2(text, source, target, signal)
+    if (provider === 'azure') return translateViaAzureOpenAI()
+    if (provider === 'papago') return translateViaPapago()
+    if (provider === 'yandex') return translateViaYandex()
+
+    ensureProviderReady(provider)
+    throw new ProviderError(
+      'provider-not-implemented',
+      `Provider ${provider} ma zapisany klucz, ale nie jest jeszcze podlaczony do requestu tłumaczenia.`,
+    )
+  }
+
   const isSuspiciousTranslation = (sourceText: string, translated: string, source: string, target: string): boolean => {
     if (source === target) return false
     const left = normalizeForComparison(stripAssFormatting(sourceText))
@@ -7123,13 +7168,22 @@ export default function App(): React.ReactElement {
   }
 
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
+    const logDiagnostic = (payload: { lineId: number; engine: string; status: 'success' | 'error' | 'skipped'; responseLength?: number; errorMessage?: string }): void => {
+      if (!translationDiagnosticsEnabled) return
+      const { lineId, engine, status, responseLength, errorMessage } = payload
+      const len = typeof responseLength === 'number' ? responseLength : 0
+      appendTranslationLog(`[diag] line=${lineId} engine=${engine} status=${status} len=${len}${errorMessage ? ` err=${errorMessage}` : ''}`)
+    }
+
     const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
     if (termMatch && mode === 'primary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano termin ze slownika projektu.`)
+      logDiagnostic({ lineId: row.id, engine: 'terminology', status: 'skipped', responseLength: termMatch.length })
       return { translated: termMatch, requiresManualCheck: false, translationSource: 'terminology' }
     }
     const fromMemory = resolveMemoryTranslation(row)
     if (fromMemory && mode === 'primary') {
+      logDiagnostic({ lineId: row.id, engine: fromMemory.source ?? 'memory', status: 'skipped', responseLength: fromMemory.value.length })
       return {
         translated: fromMemory.value,
         requiresManualCheck: false,
@@ -7141,6 +7195,7 @@ export default function App(): React.ReactElement {
     const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
     if (classification.kind === 'glossary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano glosariusz — uzywam preferowanego tlumaczenia.`)
+      logDiagnostic({ lineId: row.id, engine: 'glossary', status: 'skipped', responseLength: (classification.preferred ?? row.source).trim().length })
       return {
         translated: (classification.preferred ?? row.source).trim(),
         requiresManualCheck: false,
@@ -7149,6 +7204,7 @@ export default function App(): React.ReactElement {
     }
     if (classification.kind === 'copy') {
       appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — przepisuje 1:1 bez ostrzezenia.`)
+      logDiagnostic({ lineId: row.id, engine: 'copy', status: 'skipped', responseLength: row.source.trim().length })
       return {
         translated: row.source.trim(),
         requiresManualCheck: false,
@@ -7180,6 +7236,8 @@ export default function App(): React.ReactElement {
     activeTranslationAbortRef.current = controller
     const backoffMs = [2000, 5000, 9000, 14000]
     let translated = ''
+    let engineUsed = providerId
+    let latencyMs = 0
     const fallbackTranslator: TranslatorFn = async (text, _source, target, signal, _ctx) => {
       try {
         return await translateViaLibre(text, 'auto', target, signal)
@@ -7187,83 +7245,80 @@ export default function App(): React.ReactElement {
         return translateViaMyMemory(text, 'auto', target, signal)
       }
     }
+    const fallbackProviders = ['deepl', 'openai', 'openrouter', 'groq', 'together', 'mistral', 'claude', 'gemini', 'cohere', 'google', 'libre', 'mymemory']
+      .filter(provider => provider !== providerId)
+    const providersToTry = mode === 'fallback' ? fallbackProviders : [providerId, ...fallbackProviders]
 
-    for (let attempt = 0; attempt <= backoffMs.length; attempt += 1) {
-      try {
-        const waitMs = providerCooldownUntilRef.current - Date.now()
-        if (waitMs > 0) {
-          appendTranslationLog(`Czekam ${Math.ceil(waitMs / 1000)}s na odblokowanie limitu providera...`)
-          await waitWithAbort(waitMs, controller.signal)
-        }
-        // Przekazujemy sourceRaw — zachowuje tagi ASS i \N dla translateSubtitleLinePreservingTags
-        const textForTranslation = row.sourceRaw || row.source
-        if (mode === 'fallback') {
-          translated = await translateSubtitleLinePreservingTags(
+    const attemptTranslateWithProvider = async (provider: string): Promise<string> => {
+      engineUsed = provider
+      const startedAt = Date.now()
+      for (let attempt = 0; attempt <= backoffMs.length; attempt += 1) {
+        try {
+          const waitMs = providerCooldownUntilRef.current - Date.now()
+          if (waitMs > 0) {
+            appendTranslationLog(`Czekam ${Math.ceil(waitMs / 1000)}s na odblokowanie limitu providera...`)
+            await waitWithAbort(waitMs, controller.signal)
+          }
+          const textForTranslation = row.sourceRaw || row.source
+          const translatedText = await translateSubtitleLinePreservingTags(
             textForTranslation,
-            'auto',
+            provider === 'deepl' ? sourceLang : 'auto',
             targetLang,
             controller.signal,
             context,
-            fallbackTranslator,
+            async (chunkText, _source, target, signal) => translateViaEngineForProvider(provider, chunkText, _source, target, signal, context),
           )
-        } else {
-          translated = await translateSubtitleLinePreservingTags(textForTranslation, sourceLang, targetLang, controller.signal, context)
-          if (providerId === 'deepl' && isSuspiciousTranslation(textForTranslation, translated, sourceLang, targetLang)) {
-            translated = await translateSubtitleLinePreservingTags(textForTranslation, 'auto', targetLang, controller.signal, context)
+          latencyMs = Date.now() - startedAt
+          if (!translatedText.trim()) {
+            throw new ProviderError('empty-response', `Provider ${provider} zwrocil pusty wynik.`)
           }
+          logDiagnostic({ lineId: row.id, engine: provider, status: 'success', responseLength: translatedText.length })
+          return translatedText
+        } catch (error) {
+          const message = error instanceof ProviderError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : 'Nieznany blad'
+          if (error instanceof ProviderError && (error.code === 'missing-api-key' || error.code === 'unsupported-language-pair')) {
+            throw error
+          }
+          const isRetryable = error instanceof ProviderError
+            && (error.code === 'rate-limit' || error.code === 'timeout' || error.code === 'network' || error.code.startsWith('econn') || error.code === 'empty-response')
+          if (!isRetryable || attempt >= backoffMs.length) {
+            logDiagnostic({ lineId: row.id, engine: provider, status: 'error', responseLength: 0, errorMessage: message })
+            throw error
+          }
+          const delay = error instanceof ProviderError
+            ? deriveRetryDelayMs(error, backoffMs[attempt])
+            : backoffMs[attempt]
+          if (error instanceof ProviderError && error.code === 'rate-limit') {
+            providerCooldownUntilRef.current = Date.now() + delay
+          }
+          appendTranslationLog(`Retry linii ${row.id} (${attempt + 1}/${backoffMs.length}) po bledzie: ${message}`)
+          await waitWithAbort(delay, controller.signal)
         }
+      }
+      throw new ProviderError('empty-response', `Provider ${provider} zwrocil pusty wynik.`)
+    }
+
+    let lastError: unknown = null
+    for (const provider of providersToTry) {
+      if (stopTranslationRef.current) break
+      try {
+        if (!['libre', 'mymemory'].includes(provider)) {
+          ensureProviderReady(provider)
+        }
+        translated = await attemptTranslateWithProvider(provider)
         break
       } catch (error) {
-        const isRetryable = error instanceof ProviderError
-          && (error.code === 'rate-limit' || error.code === 'timeout' || error.code === 'network' || error.code.startsWith('econn'))
-        if (!isRetryable || attempt >= backoffMs.length) {
-          if (mode === 'primary' && providerId === 'deepl' && error instanceof ProviderError && error.code === 'rate-limit') {
-            const textForFallback = row.sourceRaw || row.source
-            appendTranslationLog(`DeepL limit dla linii ${row.id}. Probuję fallback LibreTranslate.`)
-            try {
-              translated = await translateSubtitleLinePreservingTags(
-                textForFallback,
-                'auto',
-                targetLang,
-                controller.signal,
-                context,
-                async (chunkText, _source, target, signal) => translateViaLibre(chunkText, 'auto', target, signal),
-              )
-              break
-            } catch (fallbackError) {
-              appendTranslationLog(`Fallback Libre nieudany dla linii ${row.id}. Probuję MyMemory.`)
-              try {
-                translated = await translateSubtitleLinePreservingTags(
-                  textForFallback,
-                  'auto',
-                  targetLang,
-                  controller.signal,
-                  context,
-                  async (chunkText, _source, target, signal) => translateViaMyMemory(chunkText, 'auto', target, signal),
-                )
-                break
-              } catch {
-                activeTranslationAbortRef.current = null
-                throw error
-              }
-            }
-          }
-          activeTranslationAbortRef.current = null
-          throw error
+        if (error instanceof ProviderError && (error.code === 'missing-api-key' || error.code === 'unsupported-language-pair')) {
+          logDiagnostic({ lineId: row.id, engine: provider, status: 'skipped', responseLength: 0, errorMessage: error.message })
+          continue
         }
-        const delay = error instanceof ProviderError
-          ? deriveRetryDelayMs(error, backoffMs[attempt])
-          : backoffMs[attempt]
-        if (error instanceof ProviderError && error.code === 'rate-limit') {
-          providerCooldownUntilRef.current = Date.now() + delay
-        }
-        appendTranslationLog(`Retry linii ${row.id} (${attempt + 1}/${backoffMs.length}) po bledzie: ${error.message}`)
-        await waitWithAbort(delay, controller.signal)
+        lastError = error
       }
     }
+
     activeTranslationAbortRef.current = null
     if (!translated) {
-      throw new Error(`Brak odpowiedzi silnika (${sourceLang}->${targetLang})`)
+      throw (lastError instanceof Error ? lastError : new Error(`Brak odpowiedzi silnika (${sourceLang}->${targetLang})`))
     }
     const postProcessed = postProcessTranslation(row, translated, context)
     translated = postProcessed.translated
@@ -7307,6 +7362,9 @@ export default function App(): React.ReactElement {
       readabilityTuned: readability.tuned,
       readabilityReason: readability.reason,
       translationSource: 'model',
+      tmConfidence: latencyMs ? Math.max(0.4, Math.min(1, 1 - latencyMs / 60000)) : 0.5,
+      engineUsed,
+      latencyMs,
     }
   }
 
@@ -7379,6 +7437,22 @@ export default function App(): React.ReactElement {
 
     const recordResult = (id: number, status: LineStatus, error?: string): void => {
       lineResults.set(id, { status, error })
+    }
+    const logDiagnostic = (payload: { lineId: number; engine: string; status: 'success' | 'error' | 'skipped'; responseLength?: number; errorMessage?: string }): void => {
+      if (!translationDiagnosticsEnabled) return
+      const { lineId, engine, status, responseLength, errorMessage } = payload
+      const len = typeof responseLength === 'number' ? responseLength : 0
+      appendTranslationLog(`[diag] line=${lineId} engine=${engine} status=${status} len=${len}${errorMessage ? ` err=${errorMessage}` : ''}`)
+    }
+
+    const engineStats = new Map<string, { requested: number; translated: number; failed: number; totalLatencyMs: number }>()
+    const recordEngineStat = (engine: string, status: 'success' | 'error' | 'skipped', latencyMs?: number): void => {
+      const entry = engineStats.get(engine) ?? { requested: 0, translated: 0, failed: 0, totalLatencyMs: 0 }
+      entry.requested += 1
+      if (status === 'success') entry.translated += 1
+      if (status === 'error') entry.failed += 1
+      if (typeof latencyMs === 'number' && status === 'success') entry.totalLatencyMs += latencyMs
+      engineStats.set(engine, entry)
     }
 
     const preflightRowsById = new Map(rowsSnapshot.map(row => [row.id, row]))
@@ -7467,6 +7541,14 @@ export default function App(): React.ReactElement {
                   }
                   : item
             )))
+            termResolved.forEach((value, id) => {
+              logDiagnostic({ lineId: id, engine: 'terminology', status: 'skipped', responseLength: value.length })
+              recordEngineStat('terminology', 'skipped')
+            })
+            memoryResolved.forEach((value, id) => {
+              logDiagnostic({ lineId: id, engine: value.source ?? 'memory', status: 'skipped', responseLength: value.value.length })
+              recordEngineStat(value.source ?? 'memory', 'skipped')
+            })
           }
 
           if (toTranslate.length > 0 && !stopTranslationRef.current && canUseBatch) {
@@ -7474,6 +7556,7 @@ export default function App(): React.ReactElement {
             activeTranslationAbortRef.current = controller
             const backoffMs = [2500, 5000, 9000]
             let translatedBatch: string[] | null = null
+            const batchStart = Date.now()
             for (let attempt = 0; attempt <= backoffMs.length; attempt += 1) {
               try {
                 const waitMs = providerCooldownUntilRef.current - Date.now()
@@ -7516,6 +7599,7 @@ export default function App(): React.ReactElement {
               const voiceMetaById = new Map<number, { characterVoiceApplied: boolean; characterVoiceSource: string; characterVoiceSummary: string; sceneToneApplied: boolean; sceneToneSummary: string }>()
               const readabilityMetaById = new Map<number, { readabilityTuned: boolean; readabilityReason: string }>()
               const sourceMetaById = new Map<number, { translationSource: DialogRow['translationSource'] }>()
+              const perLineLatency = Math.max(1, Math.floor((Date.now() - batchStart) / Math.max(1, toTranslate.length)))
               for (let index = 0; index < toTranslate.length; index += 1) {
                 const row = toTranslate[index]
                 let translated = translatedBatch?.[index] ?? ''
@@ -7553,6 +7637,8 @@ export default function App(): React.ReactElement {
                   sceneToneSummary: context.sceneToneSummary,
                 })
                 sourceMetaById.set(row.id, { translationSource: 'model' })
+                logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'success', responseLength: translated.length })
+                recordEngineStat('deepl', 'success', perLineLatency)
                 recordResult(row.id, 'done')
               }
               setRowsData(prev => prev.map(item => (
@@ -7597,6 +7683,9 @@ export default function App(): React.ReactElement {
             const result = await translateSingleRow(row)
             if (stopTranslationRef.current) break
             recordResult(lineId, 'done')
+            if (result.engineUsed) {
+              recordEngineStat(result.engineUsed, 'success', result.latencyMs)
+            }
             setRowsData(prev => prev.map(item => (
               item.id === lineId
                 ? {
@@ -7632,6 +7721,8 @@ export default function App(): React.ReactElement {
               : error instanceof Error
                 ? error.message
                 : 'Nieznany blad tlumaczenia'
+            logDiagnostic({ lineId, engine: providerId, status: 'error', responseLength: 0, errorMessage: diagnostic })
+            recordEngineStat(providerId, 'error')
             appendTranslationLog(`Linia ${lineId}: ${diagnostic}`)
             recordResult(lineId, isRateLimit ? 'rate-limited' : 'error', diagnostic)
             setRowsData(prev => prev.map(item => (
@@ -7673,6 +7764,9 @@ export default function App(): React.ReactElement {
           try {
             const result = await translateSingleRow(row, 'primary')
             recordResult(lineId, 'done')
+            if (result.engineUsed) {
+              recordEngineStat(result.engineUsed, 'success', result.latencyMs)
+            }
             setRowsData(prev => prev.map(item => (
               item.id === lineId
                 ? {
@@ -7708,6 +7802,9 @@ export default function App(): React.ReactElement {
             try {
               const result = await translateSingleRow(row, 'fallback')
               recordResult(lineId, 'done')
+            if (result.engineUsed) {
+              recordEngineStat(result.engineUsed, 'success', result.latencyMs)
+            }
             setRowsData(prev => prev.map(item => (
               item.id === lineId
                 ? {
@@ -7732,15 +7829,17 @@ export default function App(): React.ReactElement {
                 }
                 : item
             )))
-            } catch (fallbackError) {
-              if (fallbackError instanceof ProviderError && fallbackError.code === 'cancelled') {
-                recordResult(lineId, 'cancelled', fallbackError.message)
-                break
-              }
-              const fallbackDiag = fallbackError instanceof Error ? fallbackError.message : 'Nieznany blad fallbacku'
-              appendTranslationLog(`Fallback linia ${lineId}: ${fallbackDiag}`)
-              recordResult(lineId, 'error', fallbackDiag)
+          } catch (fallbackError) {
+            if (fallbackError instanceof ProviderError && fallbackError.code === 'cancelled') {
+              recordResult(lineId, 'cancelled', fallbackError.message)
+              break
             }
+            const fallbackDiag = fallbackError instanceof Error ? fallbackError.message : 'Nieznany blad fallbacku'
+            logDiagnostic({ lineId, engine: providerId, status: 'error', responseLength: 0, errorMessage: fallbackDiag })
+            recordEngineStat(providerId, 'error')
+            appendTranslationLog(`Fallback linia ${lineId}: ${fallbackDiag}`)
+            recordResult(lineId, 'error', fallbackDiag)
+          }
           }
           if (!stopTranslationRef.current) {
             await waitDuringRun(getProviderBaseDelayMs())
@@ -7816,6 +7915,13 @@ export default function App(): React.ReactElement {
       appendTranslationLog(
         `Zrodla: reviewed=${sourceCounters.reviewed}, trusted=${sourceCounters.trusted}, project=${sourceCounters.project}, global=${sourceCounters.global}, patterns=${sourceCounters.patterns}, model=${sourceCounters.model}, manualCheck=${sourceCounters.manualCheck}, repaired=${sourceCounters.repaired}${sourceCounters.otherRule ? `, otherRule=${sourceCounters.otherRule}` : ''}`
       )
+      if (engineStats.size > 0) {
+        const engineParts = [...engineStats.entries()].map(([engine, stat]) => {
+          const avgLatency = stat.translated > 0 ? Math.round(stat.totalLatencyMs / stat.translated) : 0
+          return `${engine}: requested=${stat.requested}, translated=${stat.translated}, failed=${stat.failed}, avgLatencyMs=${avgLatency}`
+        })
+        appendTranslationLog(`EngineStats: ${engineParts.join(' | ')}`)
+      }
 
       if (missingRowsFromInput.length > 0) {
         appendTranslationLog(`Brakujace wiersze wejscia: ${missingRowsFromInput.join(', ')}`)
@@ -8366,6 +8472,8 @@ export default function App(): React.ReactElement {
         onTranslateAll={handleTranslateAll}
         onTranslateSelected={handleTranslateSelected}
         onStopTranslate={handleStopTranslate}
+        diagnosticsEnabled={translationDiagnosticsEnabled}
+        onChangeDiagnosticsEnabled={setTranslationDiagnosticsEnabled}
         isTranslating={isTranslating}
         selectedCount={selectedLineIds.size}
         sourceLang={sourceLang}
