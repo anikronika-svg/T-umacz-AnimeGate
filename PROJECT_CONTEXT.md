@@ -1,9 +1,9 @@
 # PROJECT CONTEXT – Tlumacz AnimeGate
 
 ## 1) Stan projektu
-- Data aktualizacji: 2026-03-13.
+- Data aktualizacji: 2026-03-14.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.48`.
+- Aktualna wersja aplikacji (`package.json`): `1.0.49`.
 - Ostatnie commity:
   - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
   - `13a9405` – auto-update IPC + preload + minimalny UI statusu
@@ -12,6 +12,7 @@
   - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
   - `01ba205` – konfiguracja instalatora NSIS + `build:win`
   - `b129606` – stabilizacja wyboru silnika (stop flicker / auto-switch loop)
+  - `d83115a` – batch import z folderu: rozszerzony parser nazw + manual confirm + fallback dla source bez prefixu, bump `1.0.49`
 
 ## 2) Stack i architektura
 - Electron (main/preload) + React + TypeScript + Vite.
@@ -152,6 +153,31 @@ Kluczowe wymagania:
 - Nadal do domkniecia manualnie w UI (regresja/UX):
   - pelny scenariusz E2E krokow postaci na realnym pliku,
   - wizualna walidacja braku duplikatow i prefilla na kartach.
+  - weryfikacja GUI z `release/win-unpacked` (aktualnie proces startuje i natychmiast sie zamyka).
+
+## 6.1) QA / buildy (1.0.49)
+- Testy: `npm run test -- --run` (OK).
+- Buildy: `npm run build:renderer`, `npm run build:electron`, `npm run build:win` (OK).
+- Status GUI `win-unpacked`: OK (UI startuje, brak blank screena).
+- Status po update instalacji: OK.
+- Wersja w UI: `1.0.49`.
+- Top bar widoczny: TAK.
+- "Import bazy z folderu": otwiera sie poprawnie.
+
+## 6.2) QA importu bazy (GUI, 1.0.49)
+- Zestaw: EN + PL po korekcie.
+- Wynik skanowania:
+  - Pliki ASS: 24
+  - Pary: 12
+  - Braki: 0
+  - Invalid: 0
+  - Manual: 0
+- Statystyka wpisow:
+  - total entries: 3707
+  - trusted: 2751
+  - low-confidence: 956
+  - rejected: 112
+- Parser nazw: wszystkie odcinki sparowane automatycznie, import bez bledow.
 
 ## 7) Znane uwagi
 - Build uzywa domyslnej ikony Electron, bo w repo brak dedykowanego `build/icon.ico`.
@@ -173,6 +199,24 @@ Kluczowe wymagania:
 - Dodano testy parsera:
   - `src/subtitleParser.spec.ts` z round-trip `parse -> serialize -> parse`,
   - walidacje zachowania tagow ASS, `\N`, braku utraty `sourceRaw`, semantyki `tlmode`.
+
+## 8.1) Batch import bazy z folderu (1.0.49)
+- UI: przycisk `Import bazy z folderu` w top bar.
+- Rekursywne skanowanie folderow `.ass` (opcja "Skanuj podfoldery").
+- Rozszerzony parser nazw plikow:
+  - prefiksy `EN/PL` z wariantami `[EN]`, `(EN)`, `EN_...`, `EN 04 ...`,
+  - numer odcinka rozpoznawany z konca nazwy,
+  - wiodacy numer odcinka w nazwie (np. `PL 04 ... - 02.ass`) oznaczany jako `needs-confirm`.
+- Manual confirm:
+  - status `needs-manual-confirm` dla niepewnych par,
+  - auto-podpowiedz kandydata, gdy istnieje tylko jeden sensowny.
+- Fallback dla source bez prefixu:
+  - pliki `.ass` bez prefixu nie trafiaja do `invalid`,
+  - jesli pasuje baseTitle + episode do PL, trafiaja jako `sourceCandidates`.
+
+## 8.2) Telemetria zrodel tlumaczen (1.0.50)
+- Per linia zapisywane: `translationSource`, `tmMatchType`, `tmConfidence`.
+- Raport po tlumaczeniu: licznik zrodel (reviewed/trusted/project/global/patterns/model), `requiresManualCheck`, `repaired`.
 
 ## 9) Auto-update (analiza stanu przed wdrozeniem)
 - Etap foundation (bez zmiany runtime/UI) został wdrozony:
@@ -218,6 +262,14 @@ Kluczowe wymagania:
 - Każda większa zmiana funkcjonalna:
   1) bump wersji (`npm version <new> --no-git-tag-version`)
   2) commit + push
+  3) tag `vX.Y.Z` + push tagu
+  4) GitHub Actions publikuje release przez `release:win`
+
+## 11) Release 1.0.49 (status techniczny)
+- Commit: `d83115a`
+- Tag: `v1.0.49` wypchniety
+- Buildy: OK (renderer/electron/win)
+- Release GitHub / `latest.yml`: do potwierdzenia manualnie (brak potwierdzenia przez web-check w tym srodowisku).
   3) tag `vX.Y.Z` + push tagu
   4) GitHub Actions publikuje release assets i `latest.yml`
   5) aktualizacja `PROJECT_CONTEXT.md`

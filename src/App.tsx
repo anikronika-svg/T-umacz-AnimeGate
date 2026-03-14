@@ -257,6 +257,9 @@ interface DialogRow {
   sceneToneSummary?: string
   readabilityTuned?: boolean
   readabilityReason?: string
+  translationSource?: 'reviewed_manual' | 'trusted_professional_import' | 'project_runtime_memory' | 'global_memory' | 'dialogue_patterns' | 'model' | 'terminology' | 'glossary' | 'copy'
+  tmMatchType?: 'exact' | 'pattern'
+  tmConfidence?: number
 }
 
 interface TranslationRequestContext {
@@ -321,6 +324,9 @@ interface TranslationAttemptResult {
   sceneToneSummary?: string
   readabilityTuned?: boolean
   readabilityReason?: string
+  translationSource?: DialogRow['translationSource']
+  tmMatchType?: DialogRow['tmMatchType']
+  tmConfidence?: DialogRow['tmConfidence']
 }
 
 const DEFAULT_TRANSLATION_BATCH_SIZE = 20
@@ -5999,7 +6005,7 @@ export default function App(): React.ReactElement {
     rowsData,
   ])
 
-  const resolveMemoryTranslation = (row: DialogRow): string | null => {
+  const resolveMemoryTranslation = (row: DialogRow): { value: string; source: DialogRow['translationSource']; tmMatchType: DialogRow['tmMatchType']; tmConfidence: number } | null => {
     const reviewedEntries = reviewedMemory
       .filter(entry => entry.quality !== 'low-confidence' && entry.sourceQuality === 'reviewed_manual')
       .map(entry => ({ source: entry.source, target: entry.target, usageCount: 0 }))
@@ -6017,17 +6023,33 @@ export default function App(): React.ReactElement {
       .filter(entry => entry.count >= 2)
       .map(entry => ({ source: entry.source, target: entry.target, usageCount: entry.count }))
 
-    const exactMemory = resolveTranslationMemoryWithPriority(row.source, [
-      reviewedEntries,
-      projectEntries,
-      projectImportedEntries,
-      globalImportedEntries,
-      fallbackEntries,
-      patternEntries,
-    ])
-    if (!exactMemory?.target) return null
-    if (normalizeForComparison(exactMemory.target) === normalizeForComparison(row.source)) return null
-    return exactMemory.target
+    const findExact = (entries: Array<{ source: string; target: string; usageCount?: number }>): { value: string; tmConfidence: number } | null => {
+      const match = resolveTranslationMemoryWithPriority(row.source, [entries])
+      if (!match?.target) return null
+      if (normalizeForComparison(match.target) === normalizeForComparison(row.source)) return null
+      const confidence = Math.min(1, 0.85 + Math.min(0.15, (match.usageCount ?? 0) * 0.02))
+      return { value: match.target, tmConfidence: confidence }
+    }
+
+    const reviewedMatch = findExact(reviewedEntries)
+    if (reviewedMatch) return { value: reviewedMatch.value, source: 'reviewed_manual', tmMatchType: 'exact', tmConfidence: reviewedMatch.tmConfidence }
+    const projectMatch = findExact(projectEntries)
+    if (projectMatch) return { value: projectMatch.value, source: 'project_runtime_memory', tmMatchType: 'exact', tmConfidence: projectMatch.tmConfidence }
+    const projectImportedMatch = findExact(projectImportedEntries)
+    if (projectImportedMatch) return { value: projectImportedMatch.value, source: 'trusted_professional_import', tmMatchType: 'exact', tmConfidence: projectImportedMatch.tmConfidence }
+    const globalImportedMatch = findExact(globalImportedEntries)
+    if (globalImportedMatch) return { value: globalImportedMatch.value, source: 'global_memory', tmMatchType: 'exact', tmConfidence: globalImportedMatch.tmConfidence }
+    const fallbackMatch = findExact(fallbackEntries)
+    if (fallbackMatch) return { value: fallbackMatch.value, source: 'global_memory', tmMatchType: 'exact', tmConfidence: fallbackMatch.tmConfidence }
+
+    const patternMatch = resolveTranslationMemoryWithPriority(row.source, [patternEntries])
+    if (patternMatch?.target) {
+      if (normalizeForComparison(patternMatch.target) === normalizeForComparison(row.source)) return null
+      const confidence = Math.min(0.85, 0.4 + Math.min(0.45, (patternMatch.usageCount ?? 0) * 0.08))
+      return { value: patternMatch.target, source: 'dialogue_patterns', tmMatchType: 'pattern', tmConfidence: confidence }
+    }
+
+    return null
   }
 
   const normalizeBaseTitleForMatch = (value: string): string => {
@@ -7104,16 +7126,25 @@ export default function App(): React.ReactElement {
     const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
     if (termMatch && mode === 'primary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano termin ze slownika projektu.`)
-      return { translated: termMatch, requiresManualCheck: false }
+      return { translated: termMatch, requiresManualCheck: false, translationSource: 'terminology' }
     }
     const fromMemory = resolveMemoryTranslation(row)
-    if (fromMemory && mode === 'primary') return { translated: fromMemory, requiresManualCheck: false }
+    if (fromMemory && mode === 'primary') {
+      return {
+        translated: fromMemory.value,
+        requiresManualCheck: false,
+        translationSource: fromMemory.source,
+        tmMatchType: fromMemory.tmMatchType,
+        tmConfidence: fromMemory.tmConfidence,
+      }
+    }
     const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
     if (classification.kind === 'glossary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano glosariusz — uzywam preferowanego tlumaczenia.`)
       return {
         translated: (classification.preferred ?? row.source).trim(),
         requiresManualCheck: false,
+        translationSource: 'glossary',
       }
     }
     if (classification.kind === 'copy') {
@@ -7121,6 +7152,7 @@ export default function App(): React.ReactElement {
       return {
         translated: row.source.trim(),
         requiresManualCheck: false,
+        translationSource: 'copy',
       }
     }
     const shouldWarnFromClassifier = classification.kind === 'warn'
@@ -7274,6 +7306,7 @@ export default function App(): React.ReactElement {
       sceneToneSummary: context.sceneToneSummary,
       readabilityTuned: readability.tuned,
       readabilityReason: readability.reason,
+      translationSource: 'model',
     }
   }
 
@@ -7395,7 +7428,7 @@ export default function App(): React.ReactElement {
             appendTranslationLog(`Batch ${batchIndex + 1}: pomijam batch DeepL (aktywne style per-postac).`)
           }
           const termResolved = new Map<number, string>()
-          const memoryResolved = new Map<number, string>()
+          const memoryResolved = new Map<number, { value: string; source: DialogRow['translationSource']; tmMatchType: DialogRow['tmMatchType']; tmConfidence: number }>()
           const toTranslate = batchRows.filter(row => {
             const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
             if (termMatch) {
@@ -7420,13 +7453,17 @@ export default function App(): React.ReactElement {
                   target: termResolved.get(item.id) as string,
                   pl: 'done',
                   requiresManualCheck: false,
+                  translationSource: 'terminology',
                 }
                 : memoryResolved.has(item.id)
                   ? {
                     ...item,
-                    target: memoryResolved.get(item.id) as string,
+                    target: memoryResolved.get(item.id)?.value as string,
                     pl: 'done',
                     requiresManualCheck: false,
+                    translationSource: memoryResolved.get(item.id)?.source,
+                    tmMatchType: memoryResolved.get(item.id)?.tmMatchType,
+                    tmConfidence: memoryResolved.get(item.id)?.tmConfidence,
                   }
                   : item
             )))
@@ -7478,6 +7515,7 @@ export default function App(): React.ReactElement {
               const repairMetaById = new Map<number, { repairAttempted: boolean; repairMode: 'safe_replace' | 'controlled_retry' | 'skipped'; repairReason: string; repairSucceeded: boolean }>()
               const voiceMetaById = new Map<number, { characterVoiceApplied: boolean; characterVoiceSource: string; characterVoiceSummary: string; sceneToneApplied: boolean; sceneToneSummary: string }>()
               const readabilityMetaById = new Map<number, { readabilityTuned: boolean; readabilityReason: string }>()
+              const sourceMetaById = new Map<number, { translationSource: DialogRow['translationSource'] }>()
               for (let index = 0; index < toTranslate.length; index += 1) {
                 const row = toTranslate[index]
                 let translated = translatedBatch?.[index] ?? ''
@@ -7514,6 +7552,7 @@ export default function App(): React.ReactElement {
                   sceneToneApplied: context.sceneToneApplied,
                   sceneToneSummary: context.sceneToneSummary,
                 })
+                sourceMetaById.set(row.id, { translationSource: 'model' })
                 recordResult(row.id, 'done')
               }
               setRowsData(prev => prev.map(item => (
@@ -7534,6 +7573,7 @@ export default function App(): React.ReactElement {
                     sceneToneSummary: voiceMetaById.get(item.id)?.sceneToneSummary,
                     readabilityTuned: readabilityMetaById.get(item.id)?.readabilityTuned ?? false,
                     readabilityReason: readabilityMetaById.get(item.id)?.readabilityReason,
+                    translationSource: sourceMetaById.get(item.id)?.translationSource,
                   }
                   : item
               )))
@@ -7575,6 +7615,9 @@ export default function App(): React.ReactElement {
                   sceneToneSummary: result.sceneToneSummary,
                   readabilityTuned: result.readabilityTuned ?? false,
                   readabilityReason: result.readabilityReason,
+                  translationSource: result.translationSource,
+                  tmMatchType: result.tmMatchType,
+                  tmConfidence: result.tmConfidence,
                 }
                 : item
             )))
@@ -7648,6 +7691,9 @@ export default function App(): React.ReactElement {
                   sceneToneSummary: result.sceneToneSummary,
                   readabilityTuned: result.readabilityTuned ?? false,
                   readabilityReason: result.readabilityReason,
+                  translationSource: result.translationSource,
+                  tmMatchType: result.tmMatchType,
+                  tmConfidence: result.tmConfidence,
                 }
                 : item
             )))
@@ -7680,6 +7726,9 @@ export default function App(): React.ReactElement {
                   sceneToneSummary: result.sceneToneSummary,
                   readabilityTuned: result.readabilityTuned ?? false,
                   readabilityReason: result.readabilityReason,
+                  translationSource: result.translationSource,
+                  tmMatchType: result.tmMatchType,
+                  tmConfidence: result.tmConfidence,
                 }
                 : item
             )))
@@ -7715,6 +7764,47 @@ export default function App(): React.ReactElement {
       const completedWithOutputIds = translatableIds.filter(id => lineHasTranslatedContent(finalRowsById.get(id)))
       const checksum = checksumFromPairs(completedWithOutputIds.map(id => [id, finalRowsById.get(id)?.target ?? '']))
 
+      const sourceCounters = {
+        reviewed: 0,
+        trusted: 0,
+        project: 0,
+        global: 0,
+        patterns: 0,
+        model: 0,
+        otherRule: 0,
+        manualCheck: 0,
+        repaired: 0,
+      }
+      completedWithOutputIds.forEach(id => {
+        const row = finalRowsById.get(id)
+        if (!row) return
+        if (row.requiresManualCheck) sourceCounters.manualCheck += 1
+        if (row.repairSucceeded) sourceCounters.repaired += 1
+        switch (row.translationSource) {
+          case 'reviewed_manual':
+            sourceCounters.reviewed += 1
+            break
+          case 'trusted_professional_import':
+            sourceCounters.trusted += 1
+            break
+          case 'project_runtime_memory':
+            sourceCounters.project += 1
+            break
+          case 'global_memory':
+            sourceCounters.global += 1
+            break
+          case 'dialogue_patterns':
+            sourceCounters.patterns += 1
+            break
+          case 'model':
+            sourceCounters.model += 1
+            break
+          default:
+            sourceCounters.otherRule += 1
+            break
+        }
+      })
+
       const parts: string[] = [`Gotowe: ${doneCount}`]
       if (retriedCount > 0) parts.push(`retry: ${retriedCount}`)
       if (failedCount > 0) parts.push(`bledy: ${failedCount}`)
@@ -7723,6 +7813,9 @@ export default function App(): React.ReactElement {
       if (skippedCount > 0) parts.push(`pominiete: ${skippedCount}`)
       appendTranslationLog(`Raport: ${parts.join(' | ')} (z ${requestedLineIds.length} linii).`)
       appendTranslationLog(`Walidacja: oczekiwane=${translatableIds.length}, z-wynikiem=${completedWithOutputIds.length}, braki=${missingTranslationIds.length}, checksum=${checksum}`)
+      appendTranslationLog(
+        `Zrodla: reviewed=${sourceCounters.reviewed}, trusted=${sourceCounters.trusted}, project=${sourceCounters.project}, global=${sourceCounters.global}, patterns=${sourceCounters.patterns}, model=${sourceCounters.model}, manualCheck=${sourceCounters.manualCheck}, repaired=${sourceCounters.repaired}${sourceCounters.otherRule ? `, otherRule=${sourceCounters.otherRule}` : ''}`
+      )
 
       if (missingRowsFromInput.length > 0) {
         appendTranslationLog(`Brakujace wiersze wejscia: ${missingRowsFromInput.join(', ')}`)
