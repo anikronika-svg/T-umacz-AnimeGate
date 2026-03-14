@@ -6723,6 +6723,10 @@ export default function App(): React.ReactElement {
     '- Keep subtitle brevity and readability.',
     '- Do not expand very short lines unless necessary for natural Polish.',
     '- Preserve meaning exactly and keep the same intent and tone.',
+    'CRITICAL: Your entire response must be the Polish translation and nothing else.',
+    'Do NOT write "Translation:", "Polish:", "Here is:", or any other prefix.',
+    'Do NOT add notes, comments, or explanations after the translation.',
+    'Start your response with the first word of the Polish translation immediately.',
   ].join('\n')
 
   const buildLlmUserPrompt = (text: string): string => [
@@ -6753,6 +6757,7 @@ export default function App(): React.ReactElement {
       body: JSON.stringify({
         model,
         temperature: 0.1,
+        max_tokens: 256,
         messages: [
           { role: 'system', content: buildLlmSystemPrompt(source, target, context) },
           { role: 'user', content: buildLlmUserPrompt(text) },
@@ -6819,7 +6824,7 @@ export default function App(): React.ReactElement {
       },
       body: JSON.stringify({
         model: CLAUDE_LOCKED_MODEL,
-        max_tokens: 1024,
+        max_tokens: 256,
         temperature: 0.1,
         system: buildLlmSystemPrompt(source, target, context),
         messages: [{ role: 'user', content: buildLlmUserPrompt(text) }],
@@ -6844,7 +6849,7 @@ export default function App(): React.ReactElement {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: buildLlmSystemPrompt(source, target, context) }] },
         contents: [{ parts: [{ text: buildLlmUserPrompt(text) }] }],
-        generationConfig: { temperature: 0.1 },
+        generationConfig: { temperature: 0.1, maxOutputTokens: 256 },
       }),
     }, 20000, signal)
     if (response.status === 400) throw new ProviderError('invalid-request', 'Gemini: bledny request (400).')
@@ -6869,6 +6874,7 @@ export default function App(): React.ReactElement {
       body: JSON.stringify({
         model,
         temperature: 0.1,
+        max_tokens: 256,
         preamble: buildLlmSystemPrompt(source, target, context),
         message: buildLlmUserPrompt(text),
       }),
