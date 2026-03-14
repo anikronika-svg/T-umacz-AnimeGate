@@ -40,7 +40,7 @@ function buildStemRegex(stem: string): RegExp | undefined {
 
 function buildEntries(terms: Record<string, string>): TerminologyEntry[] {
   return Object.entries(terms)
-    .map(([source, target]) => {
+    .map(([source, target]): TerminologyEntry | null => {
       const sourceValue = source.trim()
       const targetValue = target.trim()
       if (!sourceValue || !targetValue) return null
@@ -52,9 +52,9 @@ function buildEntries(terms: Record<string, string>): TerminologyEntry[] {
         targetPattern: buildWordRegex(escapeRegex(targetValue)),
         stemPattern: buildStemRegex(stem),
         stem,
-      } satisfies TerminologyEntry
+      }
     })
-    .filter((entry): entry is TerminologyEntry => Boolean(entry))
+    .filter((entry): entry is TerminologyEntry => entry !== null)
 }
 
 function enforceInText(text: string, entries: TerminologyEntry[]): string {

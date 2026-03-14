@@ -50,9 +50,6 @@ const SAFE_ISSUES: TranslationQualityIssueType[] = [
   'grammar-anomaly',
 ]
 
-function normalizeToken(value: string): string {
-  return value.trim().replace(/[.!?…]+$/u, '')
-}
 
 function applyGlossaryExact(value: string, glossary: Array<{ source: string; preferred: string; active?: boolean }>): string | null {
   const trimmed = value.trim()

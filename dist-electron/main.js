@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const fs_1 = require("fs");
+const net_1 = __importDefault(require("net"));
 const path_1 = __importDefault(require("path"));
 const crypto_1 = require("crypto");
 const child_process_1 = require("child_process");
@@ -13,6 +14,197 @@ const projectStorage_1 = require("./projectStorage");
 const OPEN_STATE_FILE = 'open-state.json';
 const PREVIEW_WINDOW_STATE_FILE = 'preview-window-state.json';
 const STARTUP_LOG_FILE = 'startup.log';
+const APPROVED_ROOTS = new Set();
+const API_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const API_ALLOWED_HOSTS = new Set([
+    'graphql.anilist.co',
+    'api.openai.com',
+    'api.anthropic.com',
+    'api.mistral.ai',
+    'api.groq.com',
+    'api.together.ai',
+    'api.openrouter.ai',
+    'openrouter.ai',
+    'api.cohere.ai',
+    'api.deepl.com',
+    'api-free.deepl.com',
+    'api.mymemory.translated.net',
+    'libretranslate.com',
+    'translate.argosopentech.com',
+    'generativelanguage.googleapis.com',
+    'translation.googleapis.com',
+    'translate.googleapis.com',
+    'api.cognitive.microsofttranslator.com',
+    'translate.yandex.net',
+    'translate.api.cloud.yandex.net',
+    'openapi.naver.com',
+    'papago.naver.com',
+]);
+const API_ALLOWED_SUFFIXES = [
+    '.cognitiveservices.azure.com',
+    '.openai.azure.com',
+];
+const API_ALLOWED_METHODS = new Set(['GET', 'POST']);
+const USER_DATA_ALLOWED_FILES = new Set([
+    'translation_memory_db.json',
+    'dialogue_patterns.json',
+]);
+function normalizeFsPath(value) {
+    const resolved = path_1.default.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+function approveRootPath(dirPath) {
+    if (!dirPath)
+        return;
+    APPROVED_ROOTS.add(normalizeFsPath(dirPath));
+}
+function isPathWithinRoot(rootPath, candidatePath) {
+    const root = normalizeFsPath(rootPath);
+    const candidate = normalizeFsPath(candidatePath);
+    return candidate === root || candidate.startsWith(root + path_1.default.sep);
+}
+function isApprovedPath(candidatePath) {
+    const normalized = normalizeFsPath(candidatePath);
+    for (const root of APPROVED_ROOTS) {
+        if (normalized === root || normalized.startsWith(root + path_1.default.sep))
+            return true;
+    }
+    return false;
+}
+function resolveProjectFilePath(projectDir, relativePath) {
+    if (!projectDir)
+        throw new Error('Brak folderu projektu.');
+    if (!relativePath)
+        throw new Error('Brak sciezki pliku projektu.');
+    if (!isApprovedPath(projectDir))
+        throw new Error('Sciezka projektu nie zostala zatwierdzona.');
+    const resolved = path_1.default.resolve(projectDir, relativePath);
+    if (!isPathWithinRoot(projectDir, resolved))
+        throw new Error('Nieprawidlowa sciezka pliku projektu.');
+    return resolved;
+}
+function resolveUserDataFilePath(relativePath) {
+    if (!relativePath)
+        throw new Error('Brak sciezki pliku userData.');
+    const userDataPath = electron_1.app.getPath('userData');
+    const normalized = relativePath.replace(/\\/g, '/');
+    if (USER_DATA_ALLOWED_FILES.has(normalized)) {
+        return path_1.default.resolve(userDataPath, normalized);
+    }
+    if (normalized.startsWith('import_reports/') && normalized.endsWith('.json')) {
+        return path_1.default.resolve(userDataPath, normalized);
+    }
+    throw new Error('Plik userData nie jest dozwolony.');
+}
+async function listAssFilesInDir(dirPath, recursive, rootPath) {
+    const entries = await fs_1.promises.readdir(dirPath, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+        const fullPath = path_1.default.join(dirPath, entry.name);
+        if (!isPathWithinRoot(rootPath, fullPath))
+            continue;
+        if (entry.isDirectory()) {
+            if (recursive) {
+                const nested = await listAssFilesInDir(fullPath, true, rootPath);
+                files.push(...nested);
+            }
+            continue;
+        }
+        if (entry.isFile() && /\.ass$/i.test(entry.name)) {
+            files.push(fullPath);
+        }
+    }
+    return files;
+}
+function isPrivateIpv4(host) {
+    const parts = host.split('.').map(part => Number(part));
+    if (parts.length !== 4 || parts.some(n => Number.isNaN(n) || n < 0 || n > 255))
+        return false;
+    const [a, b] = parts;
+    if (a === 10)
+        return true;
+    if (a === 127)
+        return true;
+    if (a === 169 && b === 254)
+        return true;
+    if (a === 192 && b === 168)
+        return true;
+    if (a === 172 && b >= 16 && b <= 31)
+        return true;
+    return false;
+}
+function isPrivateIpv6(host) {
+    const value = host.toLowerCase();
+    if (value === '::1')
+        return true;
+    if (value.startsWith('fc') || value.startsWith('fd'))
+        return true;
+    if (value.startsWith('fe80'))
+        return true;
+    return false;
+}
+function isBlockedHostname(hostname) {
+    if (!hostname)
+        return true;
+    if (hostname === 'localhost')
+        return true;
+    const ipType = net_1.default.isIP(hostname);
+    if (ipType === 4)
+        return isPrivateIpv4(hostname);
+    if (ipType === 6)
+        return isPrivateIpv6(hostname);
+    return false;
+}
+function isAllowedApiHost(hostname) {
+    if (API_ALLOWED_HOSTS.has(hostname))
+        return true;
+    return API_ALLOWED_SUFFIXES.some(suffix => hostname.endsWith(suffix));
+}
+function getCspHeaderValue() {
+    return [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "font-src 'self' data:",
+        "connect-src https:",
+        "base-uri 'self'",
+        "form-action 'none'",
+        "frame-ancestors 'none'",
+    ].join('; ');
+}
+async function readResponseTextWithLimit(response, limitBytes) {
+    const reader = response.body?.getReader();
+    if (!reader) {
+        const text = await response.text();
+        if (text.length > limitBytes)
+            throw new Error('response-too-large');
+        return text;
+    }
+    const decoder = new TextDecoder();
+    let received = 0;
+    let output = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done)
+            break;
+        if (value) {
+            received += value.byteLength;
+            if (received > limitBytes) {
+                try {
+                    await reader.cancel();
+                }
+                catch {
+                    // ignore
+                }
+                throw new Error('response-too-large');
+            }
+            output += decoder.decode(value, { stream: true });
+        }
+    }
+    output += decoder.decode();
+    return output;
+}
 function getOpenStatePath() {
     return path_1.default.join(electron_1.app.getPath('userData'), OPEN_STATE_FILE);
 }
@@ -43,6 +235,8 @@ let detachedPreviewState = {
     sourceText: '',
     targetText: '',
 };
+let mainRendererReady = false;
+let mainRendererReadyTimer = null;
 async function readPreviewWindowBounds() {
     try {
         const raw = await fs_1.promises.readFile(getPreviewWindowStatePath(), 'utf-8');
@@ -139,6 +333,15 @@ function renderStartupErrorPage(win, title, details) {
   </body>
 </html>`;
     void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+}
+async function fileExists(filePath) {
+    try {
+        await fs_1.promises.access(filePath);
+        return true;
+    }
+    catch {
+        return false;
+    }
 }
 function buildWaveformCacheKey(filePath, size, mtimeMs) {
     return (0, crypto_1.createHash)('sha1').update(`${filePath}|${size}|${mtimeMs}`).digest('hex');
@@ -356,12 +559,17 @@ function loadRendererWindow(win, hash) {
         const url = hash
             ? `${process.env.VITE_DEV_SERVER_URL}#${hash}`
             : process.env.VITE_DEV_SERVER_URL;
+        startupLog('INFO', 'renderer:load', { mode: 'dev', url });
         return win.loadURL(url);
     }
+    startupLog('INFO', 'renderer:load', { mode: 'file', path: rendererIndexPath, hash: hash ?? '' });
     return win.loadFile(rendererIndexPath, hash ? { hash } : undefined);
 }
-function createWindow() {
+async function createWindow() {
     const preloadPath = path_1.default.join(__dirname, 'preload.js');
+    const rendererIndexPath = path_1.default.join(__dirname, '../dist/index.html');
+    const preloadExists = await fileExists(preloadPath);
+    const rendererExists = await fileExists(rendererIndexPath);
     startupLog('INFO', 'createWindow:start', {
         isPackaged: electron_1.app.isPackaged,
         appPath: electron_1.app.getAppPath(),
@@ -369,7 +577,9 @@ function createWindow() {
         resourcesPath: process.resourcesPath,
         dirname: __dirname,
         preloadPath,
-        rendererIndexPath: path_1.default.join(__dirname, '../dist/index.html'),
+        rendererIndexPath,
+        preloadExists,
+        rendererExists,
         hasDevServerUrl: Boolean(process.env.VITE_DEV_SERVER_URL),
     });
     const win = new electron_1.BrowserWindow({
@@ -384,6 +594,12 @@ function createWindow() {
         title: 'AnimeGate Translator',
     });
     mainWindow = win;
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', event => {
+        if (process.env.VITE_DEV_SERVER_URL)
+            return;
+        event.preventDefault();
+    });
     win.on('closed', () => {
         mainWindow = null;
         if (previewWindow && !previewWindow.isDestroyed()) {
@@ -392,6 +608,26 @@ function createWindow() {
     });
     win.webContents.on('did-finish-load', () => {
         startupLog('INFO', 'webContents:did-finish-load', {
+            url: win.webContents.getURL(),
+        });
+        if (win === mainWindow) {
+            if (mainRendererReadyTimer)
+                clearTimeout(mainRendererReadyTimer);
+            mainRendererReadyTimer = setTimeout(() => {
+                if (!mainRendererReady) {
+                    startupLog('ERROR', 'renderer:ready-timeout', { url: win.webContents.getURL() });
+                    renderStartupErrorPage(win, 'Nie mozna uruchomic UI aplikacji', 'Renderer nie potwierdzil poprawnego startu w wymaganym czasie.');
+                }
+            }, 5000);
+        }
+    });
+    win.webContents.on('did-start-loading', () => {
+        startupLog('INFO', 'webContents:did-start-loading', {
+            url: win.webContents.getURL(),
+        });
+    });
+    win.webContents.on('did-stop-loading', () => {
+        startupLog('INFO', 'webContents:did-stop-loading', {
             url: win.webContents.getURL(),
         });
     });
@@ -417,11 +653,20 @@ function createWindow() {
         startupLog('ERROR', 'webContents:render-process-gone', details);
         renderStartupErrorPage(win, 'Proces renderera zostal zakonczony', toLogString(details));
     });
-    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-        if (level >= 2) {
-            startupLog('WARN', 'renderer:console-message', { level, message, line, sourceId });
-        }
+    win.webContents.on('unresponsive', () => {
+        startupLog('WARN', 'webContents:unresponsive', { url: win.webContents.getURL() });
     });
+    win.webContents.on('responsive', () => {
+        startupLog('INFO', 'webContents:responsive', { url: win.webContents.getURL() });
+    });
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+        const severity = level >= 3 ? 'ERROR' : (level === 2 ? 'WARN' : 'INFO');
+        startupLog(severity, 'renderer:console-message', { level, message, line, sourceId });
+    });
+    if (!preloadExists || !rendererExists) {
+        renderStartupErrorPage(win, 'Nie mozna zaladowac UI aplikacji', `Brak wymaganych plikow UI.\npreload: ${preloadPath} (exists=${preloadExists})\nindex.html: ${rendererIndexPath} (exists=${rendererExists})`);
+        return;
+    }
     const loadPromise = loadRendererWindow(win);
     void loadPromise.catch(error => {
         startupLog('ERROR', 'window-load-failed', error);
@@ -455,6 +700,12 @@ async function createDetachedPreviewWindow() {
     previewWindow = preview;
     preview.on('closed', () => {
         previewWindow = null;
+    });
+    preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    preview.webContents.on('will-navigate', event => {
+        if (process.env.VITE_DEV_SERVER_URL)
+            return;
+        event.preventDefault();
     });
     const persistBounds = () => {
         if (!previewWindow || previewWindow.isDestroyed())
@@ -491,6 +742,7 @@ function setupFileIpc() {
         const filePath = result.filePaths[0];
         try {
             const content = await fs_1.promises.readFile(filePath, 'utf-8');
+            approveRootPath(path_1.default.dirname(filePath));
             await writeOpenState({ lastDir: path_1.default.dirname(filePath) });
             return { canceled: false, filePath, content };
         }
@@ -500,6 +752,12 @@ function setupFileIpc() {
         }
     });
     electron_1.ipcMain.handle('file:readSubtitle', async (_event, filePath) => {
+        if (!filePath || !/\.(ass|ssa)$/i.test(filePath)) {
+            throw new Error('Nieprawidłowy format pliku napisów.');
+        }
+        if (!isApprovedPath(filePath)) {
+            throw new Error('Brak dostępu do pliku spoza zatwierdzonego katalogu.');
+        }
         const content = await fs_1.promises.readFile(filePath, 'utf-8');
         await writeOpenState({ lastDir: path_1.default.dirname(filePath) });
         return { filePath, content };
@@ -509,6 +767,12 @@ function setupFileIpc() {
         const content = args?.content ?? '';
         if (!sourcePath) {
             throw new Error('Brak ścieżki pliku źródłowego.');
+        }
+        if (!/\.(ass|ssa)$/i.test(sourcePath)) {
+            throw new Error('Nieprawidłowy format pliku napisów.');
+        }
+        if (!isApprovedPath(sourcePath)) {
+            throw new Error('Brak dostępu do zapisu poza zatwierdzonym katalogiem.');
         }
         const sourceDir = path_1.default.dirname(sourcePath);
         const sourceBaseName = path_1.default.basename(sourcePath);
@@ -533,10 +797,36 @@ function setupFileIpc() {
             return { canceled: true };
         }
         const filePath = result.filePaths[0];
+        approveRootPath(path_1.default.dirname(filePath));
         await writeOpenState({ lastDir: path_1.default.dirname(filePath) });
         return { canceled: false, filePath };
     });
-    electron_1.ipcMain.handle('video:getWaveform', async (_event, args) => getWaveformForVideo(args));
+    electron_1.ipcMain.handle('video:getWaveform', async (_event, args) => {
+        const filePath = args?.filePath?.trim();
+        if (!filePath) {
+            return {
+                ok: false,
+                filePath: '',
+                sampleRate: 0,
+                peaks: [],
+                duration: 0,
+                fromCache: false,
+                error: 'Brak sciezki pliku wideo.',
+            };
+        }
+        if (!isApprovedPath(filePath)) {
+            return {
+                ok: false,
+                filePath,
+                sampleRate: 0,
+                peaks: [],
+                duration: 0,
+                fromCache: false,
+                error: 'Brak dostepu do pliku wideo spoza zatwierdzonego katalogu.',
+            };
+        }
+        return getWaveformForVideo(args);
+    });
     electron_1.ipcMain.handle('api:getConfig', async () => readApiConfig());
     electron_1.ipcMain.handle('api:saveConfig', async (_event, config) => {
         await writeApiConfig(config);
@@ -553,6 +843,47 @@ function setupFileIpc() {
                 error: { code: 'invalid-request', message: 'Brak URL zapytania.' },
             };
         }
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(url);
+        }
+        catch {
+            return {
+                ok: false,
+                status: 0,
+                statusText: 'INVALID_URL',
+                body: '',
+                error: { code: 'invalid-url', message: 'Nieprawidłowy URL.' },
+            };
+        }
+        if (parsedUrl.protocol !== 'https:') {
+            return {
+                ok: false,
+                status: 0,
+                statusText: 'INVALID_PROTOCOL',
+                body: '',
+                error: { code: 'invalid-protocol', message: 'Dozwolony jest tylko protokół HTTPS.' },
+            };
+        }
+        if (isBlockedHostname(parsedUrl.hostname) || !isAllowedApiHost(parsedUrl.hostname)) {
+            return {
+                ok: false,
+                status: 0,
+                statusText: 'HOST_BLOCKED',
+                body: '',
+                error: { code: 'host-blocked', message: 'Host nie znajduje się na liście dozwolonych.' },
+            };
+        }
+        const method = (args.method ?? 'GET').toUpperCase();
+        if (!API_ALLOWED_METHODS.has(method)) {
+            return {
+                ok: false,
+                status: 0,
+                statusText: 'METHOD_NOT_ALLOWED',
+                body: '',
+                error: { code: 'method-not-allowed', message: 'Niedozwolona metoda HTTP.' },
+            };
+        }
         const timeoutMs = Math.max(1000, Math.min(45000, Number(args.timeoutMs ?? 15000)));
         const timeoutController = new AbortController();
         let timeoutReached = false;
@@ -561,13 +892,14 @@ function setupFileIpc() {
             timeoutController.abort();
         }, timeoutMs);
         try {
-            const response = await fetch(url, {
-                method: args.method ?? 'GET',
+            const response = await fetch(parsedUrl.toString(), {
+                method,
                 headers: args.headers ?? {},
                 body: args.body,
                 signal: timeoutController.signal,
+                redirect: 'error',
             });
-            const body = await response.text();
+            const body = await readResponseTextWithLimit(response, API_MAX_RESPONSE_BYTES);
             const headers = Object.fromEntries(response.headers.entries());
             return {
                 ok: response.ok,
@@ -591,6 +923,18 @@ function setupFileIpc() {
                 };
             }
             const fetchErr = error;
+            if (fetchErr.message === 'response-too-large') {
+                return {
+                    ok: false,
+                    status: 0,
+                    statusText: 'RESPONSE_TOO_LARGE',
+                    body: '',
+                    error: {
+                        code: 'response-too-large',
+                        message: `Odpowiedź przekracza limit ${API_MAX_RESPONSE_BYTES} bajtów.`,
+                    },
+                };
+            }
             const causeCode = fetchErr.cause?.code;
             const networkCode = causeCode ?? 'network';
             const details = fetchErr.cause?.message ?? fetchErr.message;
@@ -619,6 +963,7 @@ function setupFileIpc() {
         if (result.canceled || result.filePaths.length === 0) {
             return { canceled: true };
         }
+        approveRootPath(result.filePaths[0]);
         return { canceled: false, directoryPath: result.filePaths[0] };
     });
     electron_1.ipcMain.handle('project:pickFile', async (_event, args) => {
@@ -634,15 +979,21 @@ function setupFileIpc() {
         if (result.canceled || result.filePaths.length === 0) {
             return { canceled: true };
         }
+        approveRootPath(path_1.default.dirname(result.filePaths[0]));
         return { canceled: false, filePath: result.filePaths[0] };
     });
     electron_1.ipcMain.handle('project:create', async (_event, args) => {
+        if (!isApprovedPath(args.parentDir)) {
+            throw new Error('Brak dostępu do folderu projektu (niezatwierdzony katalog).');
+        }
         const created = await (0, projectStorage_1.createProjectOnDisk)(args);
+        approveRootPath(created.projectDir);
         return { ok: true, ...created };
     });
     electron_1.ipcMain.handle('project:open', async (_event, projectPath) => {
         startupLog('INFO', 'projectPath', { projectPath });
         const opened = await (0, projectStorage_1.openProjectFromDisk)(projectPath);
+        approveRootPath(opened.projectDir);
         startupLog('INFO', 'projectFileFound', { configPath: opened.configPath });
         startupLog('INFO', 'projectLoaded', {
             projectId: opened.config.projectId,
@@ -652,8 +1003,78 @@ function setupFileIpc() {
         return { ok: true, ...opened };
     });
     electron_1.ipcMain.handle('project:saveConfig', async (_event, args) => {
+        if (!isApprovedPath(args.projectDir)) {
+            throw new Error('Brak dostępu do zapisu projektu (niezatwierdzony katalog).');
+        }
         const saved = await (0, projectStorage_1.saveProjectConfigOnDisk)(args.projectDir, args.config);
         return { ok: true, ...saved };
+    });
+    electron_1.ipcMain.handle('project:readTextFile', async (_event, args) => {
+        try {
+            const filePath = resolveProjectFilePath(args.projectDir, args.relativePath);
+            const content = await fs_1.promises.readFile(filePath, 'utf-8');
+            return { ok: true, content };
+        }
+        catch (error) {
+            const code = error?.code;
+            if (code === 'ENOENT')
+                return { ok: false, error: 'not-found' };
+            const message = error instanceof Error ? error.message : 'Nie udalo sie odczytac pliku projektu.';
+            return { ok: false, error: message };
+        }
+    });
+    electron_1.ipcMain.handle('project:writeTextFile', async (_event, args) => {
+        try {
+            const filePath = resolveProjectFilePath(args.projectDir, args.relativePath);
+            await fs_1.promises.mkdir(path_1.default.dirname(filePath), { recursive: true });
+            await fs_1.promises.writeFile(filePath, args.content ?? '', 'utf-8');
+            return { ok: true };
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac pliku projektu.';
+            return { ok: false, error: message };
+        }
+    });
+    electron_1.ipcMain.handle('project:listAssFiles', async (_event, args) => {
+        try {
+            if (!args?.dir)
+                return { ok: false, error: 'Brak katalogu.' };
+            if (!isApprovedPath(args.dir))
+                return { ok: false, error: 'Brak dostepu do katalogu (niezatwierdzony).' };
+            const normalizedDir = path_1.default.resolve(args.dir);
+            const files = await listAssFilesInDir(normalizedDir, Boolean(args.recursive), normalizedDir);
+            return { ok: true, files };
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : 'Nie udalo sie odczytac katalogu.';
+            return { ok: false, error: message };
+        }
+    });
+    electron_1.ipcMain.handle('app:readUserDataFile', async (_event, args) => {
+        try {
+            const filePath = resolveUserDataFilePath(args.relativePath);
+            const content = await fs_1.promises.readFile(filePath, 'utf-8');
+            return { ok: true, content };
+        }
+        catch (error) {
+            const code = error?.code;
+            if (code === 'ENOENT')
+                return { ok: false, error: 'not-found' };
+            const message = error instanceof Error ? error.message : 'Nie udalo sie odczytac pliku userData.';
+            return { ok: false, error: message };
+        }
+    });
+    electron_1.ipcMain.handle('app:writeUserDataFile', async (_event, args) => {
+        try {
+            const filePath = resolveUserDataFilePath(args.relativePath);
+            await fs_1.promises.mkdir(path_1.default.dirname(filePath), { recursive: true });
+            await fs_1.promises.writeFile(filePath, args.content ?? '', 'utf-8');
+            return { ok: true };
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : 'Nie udalo sie zapisac pliku userData.';
+            return { ok: false, error: message };
+        }
     });
     electron_1.ipcMain.handle('preview:openWindow', async () => {
         await createDetachedPreviewWindow();
@@ -703,15 +1124,49 @@ function setupUpdaterIpc() {
     electron_1.ipcMain.handle('updater:downloadUpdate', async () => (0, updater_1.downloadUpdate)());
     electron_1.ipcMain.handle('updater:installUpdate', async () => (0, updater_1.installUpdate)());
 }
+function setupAppIpc() {
+    electron_1.ipcMain.handle('app:getVersion', async () => ({
+        version: electron_1.app.getVersion(),
+        isPackaged: electron_1.app.isPackaged,
+        execPath: process.execPath,
+    }));
+}
+function setupPreloadDiagnostics() {
+    electron_1.ipcMain.on('app:preload-ready', (event, payload) => {
+        startupLog('INFO', 'preload:ready', {
+            url: event.sender?.getURL?.() ?? '',
+            payload,
+        });
+    });
+    electron_1.ipcMain.on('app:renderer-ready', event => {
+        if (event.sender === mainWindow?.webContents) {
+            mainRendererReady = true;
+            if (mainRendererReadyTimer) {
+                clearTimeout(mainRendererReadyTimer);
+                mainRendererReadyTimer = null;
+            }
+            startupLog('INFO', 'renderer:ready', { url: event.sender.getURL() });
+        }
+    });
+}
 electron_1.app.whenReady().then(() => {
     startupLog('INFO', 'app:ready', {
         version: electron_1.app.getVersion(),
         isPackaged: electron_1.app.isPackaged,
         userData: electron_1.app.getPath('userData'),
     });
+    if (electron_1.app.isPackaged) {
+        electron_1.session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+            const headers = details.responseHeaders ?? {};
+            headers['Content-Security-Policy'] = [getCspHeaderValue()];
+            callback({ responseHeaders: headers });
+        });
+    }
     setupFileIpc();
     setupUpdaterIpc();
-    createWindow();
+    setupAppIpc();
+    setupPreloadDiagnostics();
+    void createWindow();
     void (0, updater_1.initializeAutoUpdate)();
     electron_1.app.on('activate', () => {
         if (electron_1.BrowserWindow.getAllWindows().length === 0) {

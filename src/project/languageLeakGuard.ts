@@ -1,4 +1,4 @@
-import { stripAssFormattingForTranslation, tokenizeAssForTranslation } from './assTranslationPreprocessor'
+import { stripAssFormattingForTranslation } from './assTranslationPreprocessor'
 import { normalizeSemanticWhitespace } from './subtitleTextSanitizer'
 import { enforceProjectTerminology } from './terminologyEnforcer'
 
