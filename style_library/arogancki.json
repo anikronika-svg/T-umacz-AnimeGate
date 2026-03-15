@@ -1,0 +1,14 @@
+{
+  "id": "arogancki",
+  "label": "Arogancki",
+  "summary": "Elevated, confident, slightly condescending register. No parody.",
+  "rules": [
+    "Use elevated but clear wording",
+    "Avoid slang and filler",
+    "Keep confidence and distance"
+  ],
+  "examples": [
+    "Dziekuje ci bardzo. -> Hmm. W porzadku.",
+    "Nie sadze. -> Nie sadze, bys mial racje."
+  ]
+}

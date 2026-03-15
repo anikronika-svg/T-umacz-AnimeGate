@@ -62,7 +62,7 @@ import {
   tokenizeAssForTranslation,
   type SubtitleToken as AssSubtitleToken,
 } from './project/assTranslationPreprocessor'
-import { sanitizeTranslationChunk } from './project/subtitleTextSanitizer'
+import { normalizeSemanticWhitespace, sanitizeTranslationChunk } from './project/subtitleTextSanitizer'
 import { buildTranslationLineContextHints } from './project/translationContextBuilder'
 import { classifyUntranslatedLine } from './project/translationHeuristics'
 import {
@@ -94,6 +94,14 @@ import {
 } from './project/translationMemoryDataset'
 import { runProviderChain, isEmptyTranslation } from './project/translationRetry'
 import { guardTranslationOutput } from './project/translationOutputGuard'
+import {
+  DEFAULT_STYLE_LIBRARY,
+  formatStyleLibraryEntry,
+  mergeStyleLibraries,
+  parseStyleLibraryEntry,
+  type StyleLibraryEntry,
+  type StyleLibraryMap,
+} from './project/styleLibrary'
 import { CharacterNotesModal, type BulkNotesApplyMode } from './components/CharacterNotesModal'
 import {
   CharacterAssignmentGrid,
@@ -341,6 +349,8 @@ interface TranslationAttemptResult {
 
 const DEFAULT_TRANSLATION_BATCH_SIZE = 20
 const DEFAULT_DELAY_BETWEEN_BATCHES_MS = 1800
+const DEFAULT_AUTOCORRECT_BATCH_SIZE = 20
+const DEFAULT_AUTOCORRECT_DELAY_BETWEEN_BATCHES_MS = 350
 
 const BASE_PROJECT_CHARACTERS: Omit<CharacterStyleAssignment, 'style' | 'profile'>[] = [
   { id: 1, name: 'Haruto', gender: 'Male', avatarColor: '#4f8ad6' },
@@ -1149,12 +1159,15 @@ interface ActionBarProps {
   onOpenMemory: () => void
   onOpenGenderCorrection: () => void
   onOpenBatchImport: () => void
+  onAutoCorrectAss: () => void
   onTranslateAll: () => void
   onTranslateSelected: () => void
   onStopTranslate: () => void
   diagnosticsEnabled: boolean
   onChangeDiagnosticsEnabled: (next: boolean) => void
   isTranslating: boolean
+  isAutoCorrecting: boolean
+  autocorrectEnabled: boolean
   selectedCount: number
   sourceLang: string
   targetLang: string
@@ -1172,9 +1185,12 @@ function ActionBar({
   onTranslateSelected,
   onStopTranslate,
   onOpenBatchImport,
+  onAutoCorrectAss,
   diagnosticsEnabled,
   onChangeDiagnosticsEnabled,
   isTranslating,
+  isAutoCorrecting,
+  autocorrectEnabled,
   selectedCount,
   sourceLang,
   targetLang,
@@ -1222,21 +1238,21 @@ function ActionBar({
       <button
         style={{ ...BASE_BTN, background: '#1976c2', borderColor: '#2b8bd8', color: '#fff', fontWeight: 700, opacity: isTranslating ? 0.7 : 1 }}
         onClick={onTranslateAll}
-        disabled={isTranslating}
+        disabled={isTranslating || isAutoCorrecting}
       >
         ▶ Tlumacz wszystko
       </button>
       <button
-        style={{ ...BASE_BTN, opacity: isTranslating || selectedCount < 1 ? 0.7 : 1 }}
+        style={{ ...BASE_BTN, opacity: isTranslating || isAutoCorrecting || selectedCount < 1 ? 0.7 : 1 }}
         onClick={onTranslateSelected}
-        disabled={isTranslating || selectedCount < 1}
+        disabled={isTranslating || isAutoCorrecting || selectedCount < 1}
       >
         Zaznaczone ({selectedCount})
       </button>
       <button
         style={{ ...BASE_BTN, borderColor: isTranslating ? '#e59f2a' : C.border, color: isTranslating ? '#ffd68d' : C.text }}
         onClick={onStopTranslate}
-        disabled={!isTranslating}
+        disabled={!isTranslating && !isAutoCorrecting}
       >
         Stop
       </button>
@@ -1246,6 +1262,13 @@ function ActionBar({
       </label>
       <button style={BASE_BTN} onClick={onOpenBatchImport}>
         Import bazy z folderu
+      </button>
+      <button
+        style={{ ...BASE_BTN, opacity: !autocorrectEnabled || isTranslating || isAutoCorrecting ? 0.6 : 1 }}
+        onClick={onAutoCorrectAss}
+        disabled={!autocorrectEnabled || isTranslating || isAutoCorrecting}
+      >
+        Autokorekta ASS
       </button>
     </div>
   )
@@ -3939,6 +3962,20 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                 ))}
                 <button style={{ ...BASE_BTN, marginTop: 8, height: 30, background: '#1476bd', borderColor: '#1999ef', color: '#fff', fontWeight: 700 }} onClick={applyGlobalToAll}>Ustaw dla wszystkich postaci</button>
               </div>
+              <div style={{ border: `1px solid ${C.border}`, background: '#202330', padding: 10, marginBottom: 10 }}>
+                <div style={{ color: C.accent, fontWeight: 700, marginBottom: 6 }}>Autokorekta ASS</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={draft.autocorrectEnabled ?? true}
+                    onChange={event => setDraft(prev => ({ ...prev, autocorrectEnabled: event.currentTarget.checked }))}
+                  />
+                  Autokorekta: {draft.autocorrectEnabled ?? true ? 'wlaczona' : 'wylaczona'}
+                </label>
+                <div style={{ marginTop: 6, fontSize: 11, color: C.textDim }}>
+                  Post-editing AI poprawia tylko istniejace tlumaczenia i zachowuje tagi ASS.
+                </div>
+              </div>
 
               <div style={{ color: C.accent, fontWeight: 700, marginBottom: 8 }}>Osobne ustawienia dla postaci</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(155px, 1fr))', gap: 8 }}>
@@ -4218,6 +4255,7 @@ function LinesView({
   selectedId,
   selectedIds,
   translatingLineId,
+  autoCorrectingLineId,
   onSelect,
   onActivateLine,
   getGenderForCharacter,
@@ -4229,6 +4267,7 @@ function LinesView({
   selectedId: number
   selectedIds: Set<number>
   translatingLineId: number | null
+  autoCorrectingLineId: number | null
   onSelect: (id: number, opts?: { additive?: boolean; range?: boolean }) => void
   onActivateLine: (id: number) => void
   getGenderForCharacter: (characterName: string) => CharacterGender | undefined
@@ -4277,6 +4316,8 @@ function LinesView({
           const active = row.id === selectedId
           const marked = selectedIds.has(row.id)
           const translating = translatingLineId === row.id
+          const autocorrecting = autoCorrectingLineId === row.id
+          const inProgress = translating || autocorrecting
           return (
             <div
               key={row.id}
@@ -4292,7 +4333,7 @@ function LinesView({
                 alignItems: 'center',
                 borderBottom: `1px solid ${C.borderB}`,
                 cursor: 'pointer',
-                background: translating
+                background: inProgress
                   ? '#344226'
                   : row.requiresManualCheck
                     ? '#3b2f1f'
@@ -4301,7 +4342,7 @@ function LinesView({
                     : marked
                       ? '#282a44'
                       : 'transparent',
-                borderLeft: translating
+                borderLeft: inProgress
                   ? `3px solid ${C.accentG}`
                   : row.requiresManualCheck
                     ? `3px solid ${C.accentY}`
@@ -4312,9 +4353,9 @@ function LinesView({
               }}
               onMouseEnter={e => { if (!active) e.currentTarget.style.background = C.bg3 }}
               onMouseLeave={e => {
-                if (!active && !marked && !translating) e.currentTarget.style.background = 'transparent'
-                if (marked && !active && !translating) e.currentTarget.style.background = '#282a44'
-                if (translating) e.currentTarget.style.background = '#344226'
+                if (!active && !marked && !inProgress) e.currentTarget.style.background = 'transparent'
+                if (marked && !active && !inProgress) e.currentTarget.style.background = '#282a44'
+                if (inProgress) e.currentTarget.style.background = '#344226'
               }}
             >
               <span><GenderBadge gender={getGenderForCharacter(row.character)} /></span>
@@ -4348,8 +4389,10 @@ export default function App(): React.ReactElement {
   const [selectedId, setSelectedId] = useState(0)
   const [selectedLineIds, setSelectedLineIds] = useState<Set<number>>(new Set())
   const [isTranslating, setIsTranslating] = useState(false)
+  const [isAutoCorrecting, setIsAutoCorrecting] = useState(false)
   const [translationCancelled, setTranslationCancelled] = useState(false)
   const [translatingLineId, setTranslatingLineId] = useState<number | null>(null)
+  const [autoCorrectingLineId, setAutoCorrectingLineId] = useState<number | null>(null)
   const [loadedFileName, setLoadedFileName] = useState('Brak pliku')
   const [appVersionInfo, setAppVersionInfo] = useState<AppVersionInfo | null>(null)
   const [loadedFilePath, setLoadedFilePath] = useState<string | null>(null)
@@ -4392,6 +4435,7 @@ export default function App(): React.ReactElement {
   const [globalImportedMemory, setGlobalImportedMemory] = useState<TranslationMemoryDatasetEntry[]>([])
   const [dialoguePatterns, setDialoguePatterns] = useState<DialoguePatternEntry[]>([])
   const [projectTerms, setProjectTerms] = useState<Record<string, string>>({})
+  const [styleLibrary, setStyleLibrary] = useState<StyleLibraryMap>(() => DEFAULT_STYLE_LIBRARY)
   const [batchImportFolder, setBatchImportFolder] = useState<string>('')
   const [batchImportFiles, setBatchImportFiles] = useState<BatchImportFileInfo[]>([])
   const [batchImportPairs, setBatchImportPairs] = useState<BatchImportPairInfo[]>([])
@@ -4424,7 +4468,9 @@ export default function App(): React.ReactElement {
     installUpdate,
   } = useUpdaterStatus()
   const stopTranslationRef = useRef(false)
+  const stopAutoCorrectRef = useRef(false)
   const activeTranslationAbortRef = useRef<AbortController | null>(null)
+  const activeAutoCorrectAbortRef = useRef<AbortController | null>(null)
   const providerCooldownUntilRef = useRef<number>(0)
   const translationMemorySaveTimerRef = useRef<number | null>(null)
   const rowsDataRef = useRef<DialogRow[]>(rowsData)
@@ -4520,6 +4566,7 @@ export default function App(): React.ReactElement {
     void loadProjectTermsFromDisk(activeDiskProject.projectDir)
     void loadProjectImportedMemoryFromDisk(activeDiskProject.projectDir)
     void loadReviewedMemoryFromDisk(activeDiskProject.projectDir)
+    void loadStyleLibraryFromDisk(activeDiskProject.projectDir)
   }, [activeDiskProject?.projectDir, activeDiskProject?.projectId])
 
   useEffect(() => {
@@ -4876,6 +4923,37 @@ export default function App(): React.ReactElement {
     }
   }
 
+  const selectStyleLibraryEntry = (context: TranslationRequestContext): StyleLibraryEntry => {
+    if (context.archetype === 'tsundere') return styleLibrary.tsundere ?? DEFAULT_STYLE_LIBRARY.tsundere
+    if (context.archetype === 'arrogant_noble') return styleLibrary.arogancki ?? DEFAULT_STYLE_LIBRARY.arogancki
+    if (context.effectiveStyle === 'formal') return styleLibrary.formalny ?? DEFAULT_STYLE_LIBRARY.formalny
+    return styleLibrary.dialog ?? DEFAULT_STYLE_LIBRARY.dialog
+  }
+
+  const formatAutocorrectContextLine = (row: DialogRow | undefined): string => {
+    if (!row) return ''
+    const source = normalizeSemanticWhitespace(stripAssFormattingForTranslation(row.sourceRaw || row.source))
+    const target = normalizeSemanticWhitespace(stripAssFormattingForTranslation(row.target || ''))
+    if (!source && !target) return ''
+    if (target) return `EN: ${source} | PL: ${target}`
+    return `EN: ${source}`
+  }
+
+  const validateAssTagIntegrity = (original: string, edited: string): { ok: boolean; reason?: string } => {
+    const originalTokens = tokenizeSubtitleText(original)
+    const editedTokens = tokenizeSubtitleText(edited)
+    if (originalTokens.length !== editedTokens.length) {
+      return { ok: false, reason: 'tag-count-mismatch' }
+    }
+    for (let i = 0; i < originalTokens.length; i += 1) {
+      const left = originalTokens[i]
+      const right = editedTokens[i]
+      if (left.type !== right.type) return { ok: false, reason: 'tag-position-mismatch' }
+      if (left.type === 'tag' && left.value !== right.value) return { ok: false, reason: 'tag-value-mismatch' }
+    }
+    return { ok: true }
+  }
+
   const suggestions = useMemo<SuggestionViewModel[]>(() => {
     if (!selectedRow) return []
     return memoryStore.entries
@@ -5210,6 +5288,7 @@ export default function App(): React.ReactElement {
     const restoredSettings: ProjectTranslationStyleSettings = {
       ...hydrated.styleSettings,
       projectId,
+      autocorrectEnabled: hydrated.styleSettings.autocorrectEnabled ?? true,
     }
 
     setSourceLang(source)
@@ -5550,6 +5629,30 @@ export default function App(): React.ReactElement {
     } catch {
       setProjectTerms({})
     }
+  }
+
+  const loadStyleLibraryFromDisk = async (projectDir: string): Promise<void> => {
+    if (!window.electronAPI?.readProjectTextFile) return
+    const entriesToLoad: Array<{ key: string; path: string }> = [
+      { key: 'dialog', path: 'style_library/dialog.json' },
+      { key: 'tsundere', path: 'style_library/tsundere.json' },
+      { key: 'arogancki', path: 'style_library/arogancki.json' },
+      { key: 'formalny', path: 'style_library/formalny.json' },
+    ]
+    const loaded: StyleLibraryMap = {}
+
+    for (const item of entriesToLoad) {
+      const result = await window.electronAPI.readProjectTextFile({
+        projectDir,
+        relativePath: item.path,
+      })
+      if (!result.ok || !result.content) continue
+      const parsed = parseStyleLibraryEntry(result.content, item.key)
+      if (!parsed) continue
+      loaded[item.key] = parsed
+    }
+
+    setStyleLibrary(mergeStyleLibraries(DEFAULT_STYLE_LIBRARY, loaded))
   }
 
   const persistTranslationMemoryToDisk = async (store: MemoryStore): Promise<void> => {
@@ -6730,6 +6833,61 @@ export default function App(): React.ReactElement {
     'Return only the Polish translation line.',
   ].join('\n')
 
+  const buildAutocorrectSystemPrompt = (
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): string => [
+    'You are a Polish subtitle post-editor.',
+    'Task: improve the existing Polish subtitle line using the English source and local context.',
+    'Return ONLY the corrected Polish line.',
+    'If you are not confident about the correction, return exactly: [[UNCERTAIN]]',
+    'Rules:',
+    '- Preserve ASS tags and markers exactly (e.g., {\\i1}, {\\i0}, \\N).',
+    '- Do not add or remove any ASS tags.',
+    '- Keep subtitle brevity and readability.',
+    '- Do not expand very short lines.',
+    '- Preserve meaning and intent.',
+    context.characterName ? `Character: ${context.characterName}` : '',
+    context.gender ? `Character gender: ${context.gender}` : '',
+    context.translationGender ? `Translation grammatical gender: ${context.translationGender}` : '',
+    context.speakingStyle ? `Declared speaking style: ${context.speakingStyle}` : '',
+    context.characterVoiceApplied ? `Character voice: ${context.characterVoiceSummary}` : '',
+    context.sceneToneApplied ? `Scene tone: ${context.sceneToneSummary}` : '',
+    styleHint ? `Style library:\n${styleHint}` : '',
+  ].filter(Boolean).join('\n')
+
+  const buildAutocorrectUserPrompt = (payload: {
+    sourceEn: string
+    currentPl: string
+    characterName: string
+    previousContext: string[]
+    nextContext: string[]
+    terminology: string[]
+  }): string => {
+    const prev = payload.previousContext.filter(Boolean)
+    const next = payload.nextContext.filter(Boolean)
+    return [
+      `SOURCE_EN: ${payload.sourceEn}`,
+      `CURRENT_PL: ${payload.currentPl}`,
+      payload.characterName ? `CHARACTER: ${payload.characterName}` : '',
+      prev.length ? `PREVIOUS_LINES:\n${prev.map(line => `- ${line}`).join('\n')}` : '',
+      next.length ? `NEXT_LINES:\n${next.map(line => `- ${line}`).join('\n')}` : '',
+      payload.terminology.length ? `TERMINOLOGY (source -> target): ${payload.terminology.join('; ')}` : '',
+      '',
+      'Return ONLY the corrected Polish line or [[UNCERTAIN]].',
+    ].filter(Boolean).join('\n')
+  }
+
+  const normalizeAutocorrectOutput = (value: string): { text: string; uncertain: boolean } => {
+    const normalized = normalizeLlmOutput(value).trim()
+    if (!normalized) return { text: '', uncertain: true }
+    const uncertainToken = /\[\[\s*UNCERTAIN\s*\]\]/i
+    if (uncertainToken.test(normalized) || /\bUNCERTAIN\b/i.test(normalized)) {
+      return { text: '', uncertain: true }
+    }
+    return { text: normalized, uncertain: false }
+  }
+
   const translateViaOpenAiCompatible = async (
     endpoint: string,
     apiKey: string,
@@ -6765,6 +6923,284 @@ export default function App(): React.ReactElement {
     const translated = extractOpenAiLikeText(data)
     if (!translated) throw new ProviderError('empty-response', 'Silnik zwrocil pusta odpowiedz.')
     return translated
+  }
+
+  const postEditViaOpenAiCompatible = async (
+    endpoint: string,
+    apiKey: string,
+    model: string,
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+    extraHeaders?: Record<string, string>,
+  ): Promise<string> => {
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...(extraHeaders ?? {}),
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 256,
+        messages: [
+          { role: 'system', content: buildAutocorrectSystemPrompt(context, styleHint) },
+          { role: 'user', content: buildAutocorrectUserPrompt(payload) },
+        ],
+      }),
+    }, 20000, signal)
+    if (response.status === 401 || response.status === 403) throw new ProviderError('invalid-api-key', `Autoryzacja nieudana (HTTP ${response.status}).`)
+    if (response.status === 429) throw new ProviderError('rate-limit', 'Przekroczony limit zapytan (429).')
+    if (!response.ok) throw new ProviderError('http-error', `HTTP ${response.status}`)
+    const data = await response.json()
+    const translated = extractOpenAiLikeText(data)
+    if (!translated) throw new ProviderError('empty-response', 'Silnik zwrocil pusta odpowiedz.')
+    return translated
+  }
+
+  const postEditViaOpenAi = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('openai')
+    const model = resolveModelForProvider('openai') || 'gpt-4o-mini'
+    return postEditViaOpenAiCompatible('https://api.openai.com/v1/chat/completions', key, model, payload, signal, context, styleHint)
+  }
+
+  const postEditViaOpenRouter = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('openrouter')
+    const model = resolveModelForProvider('openrouter') || 'openai/gpt-4o-mini'
+    return postEditViaOpenAiCompatible(
+      'https://openrouter.ai/api/v1/chat/completions',
+      key,
+      model,
+      payload,
+      signal,
+      context,
+      styleHint,
+      { 'HTTP-Referer': 'https://animegate.local', 'X-Title': 'AnimeGate Translator' },
+    )
+  }
+
+  const postEditViaGroq = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('groq')
+    const model = resolveModelForProvider('groq') || 'llama-3.3-70b-versatile'
+    return postEditViaOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', key, model, payload, signal, context, styleHint)
+  }
+
+  const postEditViaTogether = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('together')
+    const model = resolveModelForProvider('together') || 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
+    return postEditViaOpenAiCompatible('https://api.together.xyz/v1/chat/completions', key, model, payload, signal, context, styleHint)
+  }
+
+  const postEditViaMistral = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('mistral')
+    const model = resolveModelForProvider('mistral') || 'mistral-small-latest'
+    return postEditViaOpenAiCompatible('https://api.mistral.ai/v1/chat/completions', key, model, payload, signal, context, styleHint)
+  }
+
+  const postEditViaClaude = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('claude')
+    const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: CLAUDE_LOCKED_MODEL,
+        max_tokens: 256,
+        temperature: 0.2,
+        system: buildAutocorrectSystemPrompt(context, styleHint),
+        messages: [{ role: 'user', content: buildAutocorrectUserPrompt(payload) }],
+      }),
+    }, 20000, signal)
+    if (response.status === 401 || response.status === 403) throw new ProviderError('invalid-api-key', `Claude: autoryzacja nieudana (HTTP ${response.status}).`)
+    if (response.status === 429) throw new ProviderError('rate-limit', 'Claude: przekroczony limit zapytan (429).')
+    if (!response.ok) throw new ProviderError('http-error', `Claude HTTP ${response.status}`)
+    const data = await response.json() as { content?: Array<{ type?: string; text?: string }> }
+    const translated = normalizeLlmOutput(data.content?.find(part => part.type === 'text')?.text ?? '')
+    if (!translated) throw new ProviderError('empty-response', 'Claude zwrocil pusta odpowiedz')
+    return translated
+  }
+
+  const postEditViaGemini = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('gemini')
+    const model = resolveModelForProvider('gemini') || 'gemini-2.0-flash'
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: buildAutocorrectSystemPrompt(context, styleHint) }] },
+        contents: [{ parts: [{ text: buildAutocorrectUserPrompt(payload) }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
+      }),
+    }, 20000, signal)
+    if (response.status === 400) throw new ProviderError('invalid-request', 'Gemini: bledny request (400).')
+    if (response.status === 401 || response.status === 403) throw new ProviderError('invalid-api-key', `Gemini: autoryzacja nieudana (HTTP ${response.status}).`)
+    if (response.status === 429) throw new ProviderError('rate-limit', 'Gemini: przekroczony limit zapytan (429).')
+    if (!response.ok) throw new ProviderError('http-error', `Gemini HTTP ${response.status}`)
+    const data = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
+    const translated = normalizeLlmOutput(data.candidates?.[0]?.content?.parts?.map(part => part.text ?? '').join('') ?? '')
+    if (!translated) throw new ProviderError('empty-response', 'Gemini zwrocil pusta odpowiedz')
+    return translated
+  }
+
+  const postEditViaCohere = async (
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    const key = ensureProviderReady('cohere')
+    const model = resolveModelForProvider('cohere') || 'command-r'
+    const response = await fetchWithTimeout('https://api.cohere.com/v1/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        max_tokens: 256,
+        preamble: buildAutocorrectSystemPrompt(context, styleHint),
+        message: buildAutocorrectUserPrompt(payload),
+      }),
+    }, 20000, signal)
+    if (response.status === 401 || response.status === 403) throw new ProviderError('invalid-api-key', `Cohere: autoryzacja nieudana (HTTP ${response.status}).`)
+    if (response.status === 429) throw new ProviderError('rate-limit', 'Cohere: przekroczony limit zapytan (429).')
+    if (!response.ok) throw new ProviderError('http-error', `Cohere HTTP ${response.status}`)
+    const data = await response.json() as { text?: string }
+    const translated = normalizeLlmOutput(data.text ?? '')
+    if (!translated) throw new ProviderError('empty-response', 'Cohere zwrocil pusta odpowiedz')
+    return translated
+  }
+
+  const postEditViaProvider = async (
+    provider: string,
+    payload: {
+      sourceEn: string
+      currentPl: string
+      characterName: string
+      previousContext: string[]
+      nextContext: string[]
+      terminology: string[]
+    },
+    signal: AbortSignal,
+    context: TranslationRequestContext,
+    styleHint: string,
+  ): Promise<string> => {
+    if (provider === 'openai') return postEditViaOpenAi(payload, signal, context, styleHint)
+    if (provider === 'openrouter') return postEditViaOpenRouter(payload, signal, context, styleHint)
+    if (provider === 'groq') return postEditViaGroq(payload, signal, context, styleHint)
+    if (provider === 'together') return postEditViaTogether(payload, signal, context, styleHint)
+    if (provider === 'mistral') return postEditViaMistral(payload, signal, context, styleHint)
+    if (provider === 'claude') return postEditViaClaude(payload, signal, context, styleHint)
+    if (provider === 'gemini') return postEditViaGemini(payload, signal, context, styleHint)
+    if (provider === 'cohere') return postEditViaCohere(payload, signal, context, styleHint)
+    throw new ProviderError('unsupported-provider', `Nieznany provider post-edit: ${provider}`)
   }
 
   const translateViaOpenAi = async (text: string, source: string, target: string, signal: AbortSignal, modelOverride?: string, context?: TranslationRequestContext): Promise<string> => {
@@ -7015,6 +7451,18 @@ export default function App(): React.ReactElement {
     while (remaining > 0) {
       if (stopTranslationRef.current) {
         throw new ProviderError('cancelled', 'Tlumaczenie zatrzymane przez uzytkownika.')
+      }
+      const slice = Math.min(250, remaining)
+      await new Promise(resolve => setTimeout(resolve, slice))
+      remaining -= slice
+    }
+  }
+
+  const waitDuringAutoCorrect = async (ms: number): Promise<void> => {
+    let remaining = ms
+    while (remaining > 0) {
+      if (stopAutoCorrectRef.current) {
+        throw new ProviderError('cancelled', 'Autokorekta zatrzymana przez uzytkownika.')
       }
       const slice = Math.min(250, remaining)
       await new Promise(resolve => setTimeout(resolve, slice))
@@ -8181,12 +8629,197 @@ export default function App(): React.ReactElement {
     })
   }
 
+  const handleAutoCorrectAss = async (): Promise<void> => {
+    if (isTranslating || isAutoCorrecting) return
+    if (!(styleSettings.autocorrectEnabled ?? true)) {
+      appendTranslationLog('Autokorekta: wylaczona w ustawieniach.')
+      return
+    }
+    if (!rowsDataRef.current.length) {
+      appendTranslationLog('Autokorekta: brak linii do korekty.')
+      return
+    }
+
+    const llmProviders = ['openai', 'openrouter', 'groq', 'together', 'mistral', 'claude', 'gemini', 'cohere']
+    const [providerId] = selectedModelId.split(':')
+    const providersToTry = [
+      ...(llmProviders.includes(providerId) ? [providerId] : []),
+      ...llmProviders.filter(provider => provider !== providerId),
+    ]
+    const eligibleProviders = providersToTry.filter(provider => {
+      try {
+        ensureProviderReady(provider)
+        return true
+      } catch (error) {
+        const message = error instanceof ProviderError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : 'Nieznany blad'
+        appendTranslationLog(`Autokorekta: pomijam provider ${provider} (${message}).`)
+        return false
+      }
+    })
+    if (!eligibleProviders.length) {
+      appendTranslationLog('Autokorekta: brak dostepnych providerow LLM (dodaj klucz API).')
+      return
+    }
+
+    const rowsToEdit = rowsDataRef.current.filter(row => lineHasTranslatedContent(row))
+    if (!rowsToEdit.length) {
+      appendTranslationLog('Autokorekta: brak linii z tlumaczeniem.')
+      return
+    }
+
+    setIsAutoCorrecting(true)
+    stopAutoCorrectRef.current = false
+    const controller = new AbortController()
+    activeAutoCorrectAbortRef.current = controller
+    appendTranslationLog(`Autokorekta: start (${rowsToEdit.length} linii).`)
+
+    try {
+      const batches: DialogRow[][] = []
+      for (let i = 0; i < rowsToEdit.length; i += DEFAULT_AUTOCORRECT_BATCH_SIZE) {
+        batches.push(rowsToEdit.slice(i, i + DEFAULT_AUTOCORRECT_BATCH_SIZE))
+      }
+
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+        if (stopAutoCorrectRef.current) break
+        const batch = batches[batchIndex]
+        appendTranslationLog(`Autokorekta batch ${batchIndex + 1}/${batches.length}: ${batch.length} linii`)
+
+        const updates = new Map<number, { target: string; requiresManualCheck: boolean }>()
+        for (const row of batch) {
+          if (stopAutoCorrectRef.current) break
+          setAutoCorrectingLineId(row.id)
+          const rowIndex = rowsDataRef.current.findIndex(item => item.id === row.id)
+          const context = getTranslationContextForRow(row)
+          const styleEntry = selectStyleLibraryEntry(context)
+          const styleHint = formatStyleLibraryEntry(styleEntry)
+          const termHints = extractTermHints(row.sourceRaw || row.source).map(term => `${term.source} -> ${term.target}`)
+          const previousContext: string[] = []
+          const nextContext: string[] = []
+          for (let i = Math.max(0, rowIndex - 3); i < rowIndex; i += 1) {
+            const line = formatAutocorrectContextLine(rowsDataRef.current[i])
+            if (line) previousContext.push(line)
+          }
+          for (let i = rowIndex + 1; i <= Math.min(rowsDataRef.current.length - 1, rowIndex + 2); i += 1) {
+            const line = formatAutocorrectContextLine(rowsDataRef.current[i])
+            if (line) nextContext.push(line)
+          }
+
+          const payload = {
+            sourceEn: normalizeSemanticWhitespace(stripAssFormattingForTranslation(row.sourceRaw || row.source)),
+            currentPl: row.target,
+            characterName: context.characterName,
+            previousContext,
+            nextContext,
+            terminology: termHints,
+          }
+
+          try {
+            const chainResult = await runProviderChain(
+              eligibleProviders,
+              async provider => postEditViaProvider(provider, payload, controller.signal, context, styleHint),
+              {
+                maxRetries: 2,
+                shouldRetry: error => error instanceof ProviderError
+                  && (error.code === 'rate-limit' || error.code === 'timeout' || error.code === 'network' || error.code.startsWith('econn') || error.code === 'empty-response'),
+                shouldSkip: error => error instanceof ProviderError && error.code === 'missing-api-key',
+              },
+            )
+
+            const normalized = normalizeAutocorrectOutput(chainResult.value)
+            if (normalized.uncertain || !normalized.text) {
+              appendTranslationLog(`Autokorekta: linia ${row.id} -> niepewna (UNCERTAIN).`)
+              updates.set(row.id, {
+                target: row.target,
+                requiresManualCheck: true,
+              })
+              continue
+            }
+
+            const tagCheck = validateAssTagIntegrity(row.target, normalized.text)
+            if (!tagCheck.ok) {
+              appendTranslationLog(`Autokorekta: linia ${row.id} -> naruszone tagi ASS (${tagCheck.reason}).`)
+              updates.set(row.id, {
+                target: row.target,
+                requiresManualCheck: true,
+              })
+              continue
+            }
+
+            const enforced = enforceProjectTerminology(
+              enforceTermHints(normalized.text, extractTermHints(row.sourceRaw || row.source)),
+              projectTerms,
+            )
+            const stabilized = stabilizeTonePunctuation(row.sourceRaw || row.source, enforced)
+            const leakCheck = detectLanguageLeak(stabilized, { terms: projectTerms })
+            if (leakCheck.englishTokens.length > 0 || leakCheck.mixed) {
+              appendTranslationLog(`Autokorekta: linia ${row.id} -> wykryto angielski leak, oznaczam do sprawdzenia.`)
+              updates.set(row.id, {
+                target: row.target,
+                requiresManualCheck: true,
+              })
+              continue
+            }
+
+            const nextTarget = stabilized.trim() ? stabilized : row.target
+            updates.set(row.id, {
+              target: nextTarget,
+              requiresManualCheck: row.requiresManualCheck ?? false,
+            })
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Nieznany blad'
+            appendTranslationLog(`Autokorekta: linia ${row.id} -> blad (${message}).`)
+            updates.set(row.id, {
+              target: row.target,
+              requiresManualCheck: true,
+            })
+          }
+
+          await waitDuringAutoCorrect(120)
+        }
+
+        if (updates.size > 0) {
+          setRowsData(prev => prev.map(row => {
+            const update = updates.get(row.id)
+            if (!update) return row
+            return {
+              ...row,
+              target: update.target,
+              requiresManualCheck: update.requiresManualCheck || row.requiresManualCheck,
+            }
+          }))
+        }
+
+        if (!stopAutoCorrectRef.current && batchIndex < batches.length - 1) {
+          await waitDuringAutoCorrect(DEFAULT_AUTOCORRECT_DELAY_BETWEEN_BATCHES_MS)
+        }
+      }
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === 'cancelled') {
+        appendTranslationLog('Autokorekta: anulowana przez uzytkownika.')
+      } else {
+        appendTranslationLog(`Autokorekta: BLAD krytyczny (${error instanceof Error ? error.message : String(error)}).`)
+      }
+    } finally {
+      setAutoCorrectingLineId(null)
+      setIsAutoCorrecting(false)
+      stopAutoCorrectRef.current = false
+      activeAutoCorrectAbortRef.current = null
+      appendTranslationLog('Autokorekta: koniec.')
+    }
+  }
+
   const handleStopTranslate = (): void => {
     setTranslationCancelled(true)
     stopTranslationRef.current = true
     activeTranslationAbortRef.current?.abort()
     activeTranslationAbortRef.current = null
     appendTranslationLog('Zadano zatrzymanie tlumaczenia (Stop) — koncze bezpiecznie biezacy przebieg.')
+    if (isAutoCorrecting) {
+      stopAutoCorrectRef.current = true
+      activeAutoCorrectAbortRef.current?.abort()
+      activeAutoCorrectAbortRef.current = null
+      appendTranslationLog('Zadano zatrzymanie autokorekty (Stop).')
+    }
   }
 
   const handleMemoryStoreChange = (next: MemoryStore): void => {
@@ -8675,12 +9308,15 @@ export default function App(): React.ReactElement {
         }}
         onOpenGenderCorrection={() => setGenderCorrectionOpen(true)}
         onOpenBatchImport={() => { void handleOpenBatchImport() }}
+        onAutoCorrectAss={() => { void handleAutoCorrectAss() }}
         onTranslateAll={handleTranslateAll}
         onTranslateSelected={handleTranslateSelected}
         onStopTranslate={handleStopTranslate}
         diagnosticsEnabled={translationDiagnosticsEnabled}
         onChangeDiagnosticsEnabled={setTranslationDiagnosticsEnabled}
         isTranslating={isTranslating}
+        isAutoCorrecting={isAutoCorrecting}
+        autocorrectEnabled={styleSettings.autocorrectEnabled ?? true}
         selectedCount={selectedLineIds.size}
         sourceLang={sourceLang}
         targetLang={targetLang}
@@ -8746,6 +9382,7 @@ export default function App(): React.ReactElement {
             selectedId={selectedId}
             selectedIds={selectedLineIds}
             translatingLineId={translatingLineId}
+            autoCorrectingLineId={autoCorrectingLineId}
             onSelect={handleSelectLine}
             onActivateLine={handleActivateLine}
             getGenderForCharacter={(characterName) => resolveGenderForCharacterName(characterName.trim(), styleSettings.characters, identityAliasMap)}

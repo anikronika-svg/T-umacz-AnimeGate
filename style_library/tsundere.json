@@ -1,0 +1,14 @@
+{
+  "id": "tsundere",
+  "label": "Tsundere",
+  "summary": "Slightly sharp, defensive, with small emotional cracks. Keep it natural and short.",
+  "rules": [
+    "Use mild sharpness or defensiveness",
+    "Do not overdo slang",
+    "Keep lines short and readable"
+  ],
+  "examples": [
+    "Dziekuje ci bardzo. -> Tch... dzieki.",
+    "Nie chce. -> Nie, nie chce."
+  ]
+}

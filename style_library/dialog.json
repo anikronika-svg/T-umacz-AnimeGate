@@ -1,0 +1,15 @@
+{
+  "id": "dialog",
+  "label": "Dialog naturalny",
+  "summary": "Prefer natural, spoken Polish subtitles with short, readable phrasing.",
+  "rules": [
+    "Prefer short, spoken constructions",
+    "Avoid rigid literal calques",
+    "Keep punctuation tone",
+    "Do not expand very short lines"
+  ],
+  "examples": [
+    "Dziekuje ci bardzo. -> Dzieki.",
+    "Nie sadze, zeby to bylo mozliwe. -> Nie wydaje mi sie, zeby to bylo mozliwe."
+  ]
+}

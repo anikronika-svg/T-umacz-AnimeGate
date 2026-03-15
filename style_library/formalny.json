@@ -1,0 +1,14 @@
+{
+  "id": "formalny",
+  "label": "Formalny",
+  "summary": "Polite, orderly, formal speech. Avoid slang and reduce emotional exaggeration.",
+  "rules": [
+    "Use polite forms",
+    "Avoid slang and contractions",
+    "Keep clarity and brevity"
+  ],
+  "examples": [
+    "Dziekuje ci bardzo. -> Dziekuje.",
+    "Co robisz? -> Co pan/pani robi?"
+  ]
+}

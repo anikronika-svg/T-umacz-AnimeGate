@@ -64,6 +64,7 @@ export interface ProjectTranslationStyleSettings {
   globalStyle: TranslationStyleId
   globalStyleProfile: ProjectGlobalStyleProfile
   characters: CharacterStyleAssignment[]
+  autocorrectEnabled: boolean
   updatedAt: string
 }
 
@@ -219,6 +220,7 @@ export function createProjectStyleSettings(
     projectId,
     globalStyle: 'neutral',
     globalStyleProfile: createDefaultGlobalStyleProfile('neutral'),
+    autocorrectEnabled: true,
     updatedAt: new Date().toISOString(),
     characters: characters.map(character => ({
       ...character,
@@ -252,6 +254,7 @@ export function loadProjectStyleSettings(
       projectId,
       globalStyle: parsed.globalStyle ?? 'neutral',
       globalStyleProfile: normalizeGlobalStyleProfile(parsed.globalStyleProfile, parsed.globalStyle ?? 'neutral'),
+      autocorrectEnabled: parsed.autocorrectEnabled ?? true,
       updatedAt: parsed.updatedAt ?? new Date().toISOString(),
       characters: [
         ...baseCharacters.map(base => {
