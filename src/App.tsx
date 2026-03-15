@@ -7108,6 +7108,7 @@ export default function App(): React.ReactElement {
     row: DialogRow,
     translated: string,
     context: TranslationRequestContext,
+    options?: { skipQuality?: boolean },
   ): { translated: string; leakGuard: ReturnType<typeof guardLanguageLeaks>; quality: ReturnType<typeof validateTranslationQuality> } => {
     let next = translated
     next = applyTranslationStyleLocally(next, targetLang, context)
@@ -7118,6 +7119,17 @@ export default function App(): React.ReactElement {
     next = polishGrammarEngine(next)
     next = dialogueStyleEngine(next)
     next = enforceProjectTerminology(next, projectTerms)
+    if (options?.skipQuality) {
+      const leakGuard = {
+        value: next,
+        requiresManualCheck: false,
+        detection: { englishTokens: [], polishTokens: [], mixed: false },
+        fixed: false,
+      }
+      next = stabilizeTonePunctuation(row.sourceRaw || row.source, next)
+      const quality = { requiresManualCheck: false, confidence: 1, issues: [] }
+      return { translated: next, leakGuard, quality }
+    }
     const leakGuard = guardLanguageLeaks(next, { terms: projectTerms })
     next = leakGuard.value
     next = stabilizeTonePunctuation(row.sourceRaw || row.source, next)
@@ -7223,6 +7235,7 @@ export default function App(): React.ReactElement {
   }
 
   const translateSingleRow = async (row: DialogRow, mode: 'primary' | 'fallback' = 'primary'): Promise<TranslationAttemptResult> => {
+    const isDeepL = providerId === 'deepl'
     const logDiagnostic = (payload: { lineId: number; engine: string; status: 'success' | 'error' | 'skipped'; responseLength?: number; errorMessage?: string }): void => {
       if (!translationDiagnosticsEnabled) return
       const { lineId, engine, status, responseLength, errorMessage } = payload
@@ -7285,7 +7298,7 @@ export default function App(): React.ReactElement {
     const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
     if (termMatch && mode === 'primary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano termin ze slownika projektu.`)
-      const guarded = applyOutputGuard(termMatch, 'terminology', { translationSource: 'terminology' }, { allowBlock: providerId !== 'deepl' })
+      const guarded = applyOutputGuard(termMatch, 'terminology', { translationSource: 'terminology' }, { allowBlock: !isDeepL })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: 'terminology', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7297,7 +7310,7 @@ export default function App(): React.ReactElement {
         translationSource: fromMemory.source,
         tmMatchType: fromMemory.tmMatchType,
         tmConfidence: fromMemory.tmConfidence,
-      }, { allowBlock: providerId !== 'deepl' })
+      }, { allowBlock: !isDeepL })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: fromMemory.source ?? 'memory', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7306,7 +7319,7 @@ export default function App(): React.ReactElement {
     const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
     if (classification.kind === 'glossary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano glosariusz — uzywam preferowanego tlumaczenia.`)
-      const guarded = applyOutputGuard((classification.preferred ?? row.source).trim(), 'glossary', { translationSource: 'glossary' }, { allowBlock: providerId !== 'deepl' })
+      const guarded = applyOutputGuard((classification.preferred ?? row.source).trim(), 'glossary', { translationSource: 'glossary' }, { allowBlock: !isDeepL })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: 'glossary', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7314,13 +7327,13 @@ export default function App(): React.ReactElement {
     }
     if (classification.kind === 'copy') {
       appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — przepisuje 1:1 bez ostrzezenia.`)
-      const guarded = applyOutputGuard(row.source.trim(), 'copy', { translationSource: 'copy' }, { allowBlock: providerId !== 'deepl' })
+      const guarded = applyOutputGuard(row.source.trim(), 'copy', { translationSource: 'copy' }, { allowBlock: !isDeepL })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: 'copy', status: 'skipped', responseLength: guarded.translated.length })
       }
       return guarded
     }
-    const shouldWarnFromClassifier = classification.kind === 'warn'
+    const shouldWarnFromClassifier = !isDeepL && classification.kind === 'warn'
     const rowIndex = rowsData.findIndex(item => item.id === row.id)
     const hints = buildTranslationLineContextHints(rowsData, rowIndex)
     const dialogueContext = buildDialogueContext(rowsData, rowIndex, { previousLines: 2, nextLines: 1 })
@@ -7412,34 +7425,38 @@ export default function App(): React.ReactElement {
     if (!translated) {
       throw new Error(`Brak odpowiedzi silnika (${sourceLang}->${targetLang})`)
     }
-    const postProcessed = postProcessTranslation(row, translated, context)
+    const postProcessed = postProcessTranslation(row, translated, context, { skipQuality: isDeepL })
     translated = postProcessed.translated
     const leakGuard = postProcessed.leakGuard
     const quality = postProcessed.quality
-    const shortLineAggressive = isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
+    const shortLineAggressive = !isDeepL && isOverAggressiveShortLineRewrite(row.sourceRaw || row.source, translated)
     let requiresManualCheck = shortLineAggressive
     if (shouldWarnFromClassifier) {
       requiresManualCheck = true
       appendTranslationLog(`Linia ${row.id}: niepewna klasyfikacja (mozliwy termin specjalny) — oznaczono do recznego sprawdzenia.`)
     }
-    if (leakGuard.requiresManualCheck) {
+    if (!isDeepL && leakGuard.requiresManualCheck) {
       requiresManualCheck = true
       appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
     }
-    if (quality.requiresManualCheck) {
+    if (!isDeepL && quality.requiresManualCheck) {
       requiresManualCheck = true
       appendTranslationLog(`Linia ${row.id}: walidacja jakosci (${Math.round(quality.confidence * 100)}%) — oznaczono do sprawdzenia.`)
     }
     if (shortLineAggressive) {
       appendTranslationLog(`Linia ${row.id}: zbyt agresywne przepisanie krótkiej kwestii — oznaczono do ręcznego sprawdzenia.`)
     }
-    const repairOutcome = await runLeakRepair(row, translated, context, leakGuard, quality)
+    const repairOutcome = isDeepL
+      ? { translated, requiresManualCheck, repairMeta: undefined }
+      : await runLeakRepair(row, translated, context, leakGuard, quality)
     translated = repairOutcome.translated
     requiresManualCheck = repairOutcome.requiresManualCheck
     const repairMeta = repairOutcome.repairMeta
-    const readability = runReadabilityTuner(row, translated, requiresManualCheck)
+    const readability = isDeepL ? { translated, tuned: false, reason: 'skipped-deepl' } : runReadabilityTuner(row, translated, requiresManualCheck)
     translated = readability.translated
-    const guardResult = guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
+    const guardResult = isDeepL
+      ? { ok: true, reason: undefined, englishLeakDetected: false, sameAsSource: false, targetPreview: '' }
+      : guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
     if (!guardResult.ok) {
       requiresManualCheck = true
       const finalClassification = guardResult.reason ?? 'other'
@@ -7747,38 +7764,22 @@ export default function App(): React.ReactElement {
                 const row = toTranslate[index]
                 let translated = translatedBatch?.[index] ?? ''
                 const context = getTranslationContextForRow(row)
-                const postProcessed = postProcessTranslation(row, translated, context)
+                const postProcessed = postProcessTranslation(row, translated, context, { skipQuality: true })
                 translated = postProcessed.translated
-                const leakGuard = postProcessed.leakGuard
-                const quality = postProcessed.quality
                 if (isSuspiciousTranslation(row.sourceRaw || row.source, translated, sourceLang, targetLang)) {
                   appendTranslationLog(`Linia ${row.id}: wynik podejrzany (batch, ${sourceLang}->${targetLang})`)
                 }
-                if (leakGuard.requiresManualCheck) {
-                  appendTranslationLog(`Linia ${row.id}: wykryto angielski fragment lub miks jezykow — oznaczono do sprawdzenia.`)
-                }
-                if (quality.requiresManualCheck) {
-                  appendTranslationLog(`Linia ${row.id}: walidacja jakosci (${Math.round(quality.confidence * 100)}%) — oznaczono do sprawdzenia.`)
-                }
-                const repairOutcome = await runLeakRepair(row, translated, context, leakGuard, quality)
-                translated = repairOutcome.translated
-                qualityById.set(row.id, repairOutcome.requiresManualCheck)
-                if (repairOutcome.repairMeta) {
-                  repairMetaById.set(row.id, repairOutcome.repairMeta)
-                }
-                const readability = runReadabilityTuner(row, translated, repairOutcome.requiresManualCheck)
-                translated = readability.translated
+                qualityById.set(row.id, false)
                 {
                   sourceMetaById.set(row.id, { translationSource: 'model' })
-                  const qualityMeta = deriveQualityClass(translated, row)
-                  qualityClassById.set(row.id, qualityMeta.qualityClass)
-                  qualityScoreById.set(row.id, qualityMeta.qualityScore)
+                  qualityClassById.set(row.id, 'good')
+                  qualityScoreById.set(row.id, 1)
                   logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'success', responseLength: translated.length })
                   recordEngineStat('deepl', 'success', perLineLatency)
                   recordResult(row.id, 'done')
                 }
                 byId.set(row.id, translated)
-                readabilityMetaById.set(row.id, { readabilityTuned: readability.tuned, readabilityReason: readability.reason })
+                readabilityMetaById.set(row.id, { readabilityTuned: false, readabilityReason: 'skipped-deepl' })
                 voiceMetaById.set(row.id, {
                   characterVoiceApplied: context.characterVoiceApplied,
                   characterVoiceSource: context.characterVoiceSource,
