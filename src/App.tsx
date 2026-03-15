@@ -7234,7 +7234,22 @@ export default function App(): React.ReactElement {
       translated: string,
       engineLabel: string,
       meta: { translationSource: DialogRow['translationSource']; tmMatchType?: DialogRow['tmMatchType']; tmConfidence?: number },
+      options?: { allowBlock?: boolean },
     ): TranslationAttemptResult => {
+      const allowBlock = options?.allowBlock ?? true
+      if (!allowBlock) {
+        const qualityMeta = deriveQualityClass(translated, row)
+        return {
+          translated,
+          requiresManualCheck: false,
+          translationSource: meta.translationSource,
+          tmMatchType: meta.tmMatchType,
+          tmConfidence: meta.tmConfidence,
+          translationQualityClass: qualityMeta.qualityClass,
+          translationQualityScore: qualityMeta.qualityScore,
+        }
+      }
+
       const guardResult = guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
       if (!guardResult.ok) {
         const finalClassification = guardResult.reason ?? 'other'
@@ -7270,7 +7285,7 @@ export default function App(): React.ReactElement {
     const termMatch = resolveTerminologyMatch(row.sourceRaw || row.source, normalizedProjectTerms)
     if (termMatch && mode === 'primary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano termin ze slownika projektu.`)
-      const guarded = applyOutputGuard(termMatch, 'terminology', { translationSource: 'terminology' })
+      const guarded = applyOutputGuard(termMatch, 'terminology', { translationSource: 'terminology' }, { allowBlock: providerId !== 'deepl' })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: 'terminology', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7282,7 +7297,7 @@ export default function App(): React.ReactElement {
         translationSource: fromMemory.source,
         tmMatchType: fromMemory.tmMatchType,
         tmConfidence: fromMemory.tmConfidence,
-      })
+      }, { allowBlock: providerId !== 'deepl' })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: fromMemory.source ?? 'memory', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7291,7 +7306,7 @@ export default function App(): React.ReactElement {
     const classification = classifyUntranslatedLine(row.sourceRaw || row.source, { glossary: glossaryForClassifier })
     if (classification.kind === 'glossary') {
       appendTranslationLog(`Linia ${row.id}: dopasowano glosariusz — uzywam preferowanego tlumaczenia.`)
-      const guarded = applyOutputGuard((classification.preferred ?? row.source).trim(), 'glossary', { translationSource: 'glossary' })
+      const guarded = applyOutputGuard((classification.preferred ?? row.source).trim(), 'glossary', { translationSource: 'glossary' }, { allowBlock: providerId !== 'deepl' })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: 'glossary', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7299,7 +7314,7 @@ export default function App(): React.ReactElement {
     }
     if (classification.kind === 'copy') {
       appendTranslationLog(`Linia ${row.id}: wykryto nazwe wlasna/special term — przepisuje 1:1 bez ostrzezenia.`)
-      const guarded = applyOutputGuard(row.source.trim(), 'copy', { translationSource: 'copy' })
+      const guarded = applyOutputGuard(row.source.trim(), 'copy', { translationSource: 'copy' }, { allowBlock: providerId !== 'deepl' })
       if (guarded.translationSource !== 'failed_passthrough') {
         logDiagnostic({ lineId: row.id, engine: 'copy', status: 'skipped', responseLength: guarded.translated.length })
       }
@@ -7443,7 +7458,7 @@ export default function App(): React.ReactElement {
         errorMessage: `blocked:${finalClassification}`,
       })
       return {
-        translated: '',
+        translated: translated.trim() ? translated : (row.sourceRaw || row.source),
         requiresManualCheck: true,
         repairMeta,
         characterVoiceApplied: context.characterVoiceApplied,
@@ -7753,26 +7768,7 @@ export default function App(): React.ReactElement {
                 }
                 const readability = runReadabilityTuner(row, translated, repairOutcome.requiresManualCheck)
                 translated = readability.translated
-                const guardResult = guardTranslationOutput(row.sourceRaw || row.source, translated, { terms: projectTerms })
-                if (!guardResult.ok) {
-                  const finalClassification = guardResult.reason ?? 'other'
-                  const prefix = finalClassification === 'source-passthrough'
-                    ? 'SOURCE_PASSTHROUGH_BLOCKED'
-                    : finalClassification === 'mixed-blocked'
-                      ? 'ENGLISH_OUTPUT_BLOCKED'
-                      : 'ENGLISH_OUTPUT_BLOCKED'
-                  appendTranslationLog(`${prefix} line=${row.id} reason=${finalClassification} sameAsSource=${guardResult.sameAsSource} englishLeak=${guardResult.englishLeakDetected} targetPreview="${guardResult.targetPreview}"`)
-                  appendTranslationLog(`NOT_COUNTED_AS_SUCCESS line=${row.id} classification=${finalClassification}`)
-                  translated = ''
-                  qualityById.set(row.id, true)
-                  sourceMetaById.set(row.id, { translationSource: 'failed_passthrough' })
-                  failureMetaById.set(row.id, finalClassification)
-                  qualityClassById.set(row.id, 'failed')
-                  qualityScoreById.set(row.id, 0)
-                  logDiagnostic({ lineId: row.id, engine: 'deepl', status: 'error', responseLength: translated.length, errorMessage: `blocked:${finalClassification}` })
-                  recordEngineStat('deepl', 'error')
-                  recordResult(row.id, 'error', `blocked:${finalClassification}`)
-                } else {
+                {
                   sourceMetaById.set(row.id, { translationSource: 'model' })
                   const qualityMeta = deriveQualityClass(translated, row)
                   qualityClassById.set(row.id, qualityMeta.qualityClass)
@@ -7887,7 +7883,11 @@ export default function App(): React.ReactElement {
               item.id === lineId
                 ? {
                   ...item,
-                  target: item.target?.trim() ? item.target : '',
+                  target: item.target?.trim()
+                    ? item.target
+                    : providerId === 'deepl'
+                      ? (row?.source ?? item.source).trim()
+                      : '',
                   pl: 'draft',
                   requiresManualCheck: true,
                   translationSource: 'failed_passthrough',
@@ -8016,7 +8016,11 @@ export default function App(): React.ReactElement {
               item.id === lineId
                 ? {
                   ...item,
-                  target: item.target?.trim() ? item.target : '',
+                  target: item.target?.trim()
+                    ? item.target
+                    : providerId === 'deepl'
+                      ? (row?.source ?? item.source).trim()
+                      : '',
                   pl: 'draft',
                   requiresManualCheck: true,
                   translationSource: 'failed_passthrough',
