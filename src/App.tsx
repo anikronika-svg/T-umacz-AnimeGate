@@ -4325,13 +4325,7 @@ function LinesView({
               <span style={{ fontSize: 11, color: row.character ? C.accentY : C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.character || ''}</span>
               <span style={{ fontSize: 12, color: C.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.source}</span>
               <span style={{ fontSize: 12, color: row.requiresManualCheck ? C.accentY : (row.target ? C.text : C.textDim), fontStyle: row.target ? 'normal' : 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {row.translationSource === 'failed_passthrough'
-                  ? row.translationFailureReason === 'english-blocked'
-                    ? '[ENGLISH BLOCKED] '
-                    : row.translationFailureReason === 'mixed-blocked'
-                      ? '[MIXED BLOCKED] '
-                      : '[SOURCE PASSTHROUGH] '
-                  : row.requiresManualCheck ? '⚠ ' : ''}
+                {row.requiresManualCheck ? '⚠ ' : ''}
                 {row.target || ''}
               </span>
             </div>
