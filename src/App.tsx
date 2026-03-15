@@ -12,6 +12,7 @@ import {
   loadProjectStyleSettings,
   resolveEffectiveStyle,
   saveProjectStyleSettings,
+  type AutocorrectMode,
   type CharacterArchetypeId,
   type CharacterGender,
   type CharacterStyleAssignment,
@@ -351,6 +352,24 @@ const DEFAULT_TRANSLATION_BATCH_SIZE = 20
 const DEFAULT_DELAY_BETWEEN_BATCHES_MS = 1800
 const DEFAULT_AUTOCORRECT_BATCH_SIZE = 20
 const DEFAULT_AUTOCORRECT_DELAY_BETWEEN_BATCHES_MS = 350
+
+const AUTOCORRECT_MODE_OPTIONS: Array<{ id: AutocorrectMode; label: string; hint: string }> = [
+  {
+    id: 'safe',
+    label: 'Bezpieczna',
+    hint: 'Literowki, interpunkcja, przecinki. Zero parafrazy.',
+  },
+  {
+    id: 'standard',
+    label: 'Standard',
+    hint: 'Lekka poprawa naturalnosci bez zmiany sensu.',
+  },
+  {
+    id: 'stylistic',
+    label: 'Stylistyczna',
+    hint: 'Delikatne wygładzenie dialogu, nadal bez zmiany sensu.',
+  },
+]
 
 const BASE_PROJECT_CHARACTERS: Omit<CharacterStyleAssignment, 'style' | 'profile'>[] = [
   { id: 1, name: 'Haruto', gender: 'Male', avatarColor: '#4f8ad6' },
@@ -3972,6 +3991,22 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   />
                   Autokorekta: {draft.autocorrectEnabled ?? true ? 'wlaczona' : 'wylaczona'}
                 </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 6 }}>
+                  Tryb:
+                  <select
+                    value={draft.autocorrectMode ?? 'standard'}
+                    disabled={!(draft.autocorrectEnabled ?? true)}
+                    onChange={event => setDraft(prev => ({ ...prev, autocorrectMode: event.currentTarget.value as AutocorrectMode }))}
+                    style={{ height: 24, background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 12 }}
+                  >
+                    {AUTOCORRECT_MODE_OPTIONS.map(option => (
+                      <option key={option.id} value={option.id}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ marginTop: 4, fontSize: 11, color: C.textDim }}>
+                  {AUTOCORRECT_MODE_OPTIONS.find(option => option.id === (draft.autocorrectMode ?? 'standard'))?.hint ?? ''}
+                </div>
                 <div style={{ marginTop: 6, fontSize: 11, color: C.textDim }}>
                   Post-editing AI poprawia tylko istniejace tlumaczenia i zachowuje tagi ASS.
                 </div>
@@ -6833,28 +6868,193 @@ export default function App(): React.ReactElement {
     'Return only the Polish translation line.',
   ].join('\n')
 
+  const BASE_AUTOCORRECT_PROTECTED_TERMS = [
+    'Krai',
+    'Sitri',
+    'Liz',
+    'Tino',
+    'Akasha',
+    'Grieving Souls',
+    'Hidden Curse',
+    'Alleyne Pillars Ruins',
+  ]
+
+  const buildAutocorrectProtectedTerms = (
+    row: DialogRow,
+    context: TranslationRequestContext,
+  ): string[] => {
+    const terms = new Set<string>(BASE_AUTOCORRECT_PROTECTED_TERMS)
+    styleSettings.characters.forEach(character => {
+      if (character.name) terms.add(character.name)
+      if (character.displayName) terms.add(character.displayName)
+      if (character.originalName) terms.add(character.originalName)
+    })
+    if (row.character) terms.add(row.character)
+    if (context.characterName) terms.add(context.characterName)
+    projectTerms.forEach(term => {
+      if (term.source) terms.add(term.source)
+      if (term.target) terms.add(term.target)
+    })
+    return [...terms].filter(Boolean)
+  }
+
+  const splitAssTextForAutocorrect = (value: string): Array<{ type: 'tag' | 'newline' | 'text'; value: string }> => {
+    const tokens: Array<{ type: 'tag' | 'newline' | 'text'; value: string }> = []
+    let i = 0
+    while (i < value.length) {
+      if (value[i] === '{') {
+        const end = value.indexOf('}', i)
+        if (end === -1) {
+          tokens.push({ type: 'text', value: value.slice(i) })
+          break
+        }
+        tokens.push({ type: 'tag', value: value.slice(i, end + 1) })
+        i = end + 1
+        continue
+      }
+      if (value.startsWith('\\N', i)) {
+        tokens.push({ type: 'newline', value: '\\N' })
+        i += 2
+        continue
+      }
+      let j = i
+      while (j < value.length && value[j] !== '{' && !value.startsWith('\\N', j)) j += 1
+      tokens.push({ type: 'text', value: value.slice(i, j) })
+      i = j
+    }
+    return tokens
+  }
+
+  const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+  const applySafeAutocorrect = (value: string, protectedTerms: string[]): { text: string; changed: boolean } => {
+    const tokens = splitAssTextForAutocorrect(value)
+    let changed = false
+    const typoRules: Array<[RegExp, string]> = [
+      [/\bwog\u00F3le\b/giu, 'w og\u00F3le'],
+      [/\bnapewno\b/giu, 'na pewno'],
+      [/\bniewiem\b/giu, 'nie wiem'],
+      [/\bnaprawd\u0119\b/giu, 'naprawd\u0119'],
+      [/\bna prawd\u0119\b/giu, 'naprawd\u0119'],
+    ]
+    const commaRules: Array<[RegExp, string]> = [
+      [/(\\bnie\\s+s\\u0105dz\\u0119)\\s+(\\u017Ce|\\u017Ceby)\\b/giu, '$1, $2'],
+      [/(\\bnie\\s+wydaje\\s+mi\\s+si\\u0119)\\s+(\\u017Ce|\\u017Ceby)\\b/giu, '$1, $2'],
+      [/(\\bwydaje\\s+mi\\s+si\\u0119)\\s+(\\u017Ce|\\u017Ceby)\\b/giu, '$1, $2'],
+      [/(\\bmy\\u015Bl\\u0119)\\s+(\\u017Ce|\\u017Ceby)\\b/giu, '$1, $2'],
+      [/(\\bwiem)\\s+(\\u017Ce|\\u017Ceby)\\b/giu, '$1, $2'],
+      [/(\\bchc\\u0119)\\s+(\\u017Ceby)\\b/giu, '$1, $2'],
+    ]
+
+    const protectedMap = new Map<string, string>()
+    let maskIndex = 0
+    const protectTerms = (text: string): string => {
+      let next = text
+      protectedTerms.forEach(term => {
+        if (!term) return
+        const token = `__PROT_${maskIndex}__`
+        const pattern = new RegExp(escapeRegExp(term), 'g')
+        if (pattern.test(next)) {
+          next = next.replace(pattern, token)
+          protectedMap.set(token, term)
+          maskIndex += 1
+        }
+      })
+      return next
+    }
+
+    const restoreTerms = (text: string): string => {
+      let next = text
+      protectedMap.forEach((term, token) => {
+        next = next.replace(new RegExp(escapeRegExp(token), 'g'), term)
+      })
+      return next
+    }
+
+    const normalizeSpacing = (text: string): string => {
+      let next = text
+      next = next.replace(/\s+([,!?;:])/g, '$1')
+      next = next.replace(/([,!?;:])([\p{L}\p{N}])/gu, '$1 $2')
+      next = next.replace(/\s{2,}/g, ' ')
+      return next
+    }
+
+    const nextTokens = tokens.map(token => {
+      if (token.type !== 'text') return token
+      let nextValue = protectTerms(token.value)
+      typoRules.forEach(([pattern, replacement]) => {
+        nextValue = nextValue.replace(pattern, replacement)
+      })
+      commaRules.forEach(([pattern, replacement]) => {
+        nextValue = nextValue.replace(pattern, replacement)
+      })
+      nextValue = normalizeSpacing(nextValue)
+      nextValue = restoreTerms(nextValue)
+      if (nextValue !== token.value) changed = true
+      return { ...token, value: nextValue }
+    })
+
+    return { text: nextTokens.map(token => token.value).join(''), changed }
+  }
+
   const buildAutocorrectSystemPrompt = (
     context: TranslationRequestContext,
     styleHint: string,
-  ): string => [
-    'You are a Polish subtitle post-editor.',
-    'Task: improve the existing Polish subtitle line using the English source and local context.',
-    'Return ONLY the corrected Polish line.',
-    'If you are not confident about the correction, return exactly: [[UNCERTAIN]]',
-    'Rules:',
-    '- Preserve ASS tags and markers exactly (e.g., {\\i1}, {\\i0}, \\N).',
-    '- Do not add or remove any ASS tags.',
-    '- Keep subtitle brevity and readability.',
-    '- Do not expand very short lines.',
-    '- Preserve meaning and intent.',
-    context.characterName ? `Character: ${context.characterName}` : '',
-    context.gender ? `Character gender: ${context.gender}` : '',
-    context.translationGender ? `Translation grammatical gender: ${context.translationGender}` : '',
-    context.speakingStyle ? `Declared speaking style: ${context.speakingStyle}` : '',
-    context.characterVoiceApplied ? `Character voice: ${context.characterVoiceSummary}` : '',
-    context.sceneToneApplied ? `Scene tone: ${context.sceneToneSummary}` : '',
-    styleHint ? `Style library:\n${styleHint}` : '',
-  ].filter(Boolean).join('\n')
+    mode: AutocorrectMode,
+    hasSource: boolean,
+  ): string => {
+    const modeRules = mode === 'safe'
+      ? [
+        'MODE: SAFE.',
+        '- Only fix typos, punctuation, and missing commas.',
+        '- Do NOT rephrase or change word order unless strictly required for grammar.',
+      ]
+      : mode === 'stylistic'
+        ? [
+          'MODE: STYLISTIC.',
+          '- Lightly improve naturalness and spoken rhythm.',
+          '- Keep edits minimal; no creative paraphrase.',
+          '- If change would be large, return [[UNCERTAIN]].',
+        ]
+        : [
+          'MODE: STANDARD.',
+          '- Lightly improve naturalness; keep edits minimal.',
+          '- No creative paraphrase.',
+        ]
+
+    const sourceRules = hasSource
+      ? [
+        'You have English source; use it to keep meaning exact.',
+      ]
+      : [
+        'SOURCE_EN is unavailable.',
+        '- Only lightly polish Polish for grammar/punctuation.',
+        '- Do NOT rephrase; do NOT change meaning.',
+        '- If unsure, return [[UNCERTAIN]].',
+      ]
+
+    return [
+      'You are a Polish subtitle post-editor.',
+      'Task: improve the existing Polish subtitle line using the English source and local context when available.',
+      'Return ONLY the corrected Polish line.',
+      'If you are not confident about the correction, return exactly: [[UNCERTAIN]]',
+      'Rules:',
+      '- Preserve ASS tags and markers exactly (e.g., {\\i1}, {\\i0}, \\N).',
+      '- Do not add or remove any ASS tags.',
+      '- Keep subtitle brevity and readability.',
+      '- Do not expand very short lines.',
+      '- Preserve meaning and intent.',
+      ...modeRules,
+      ...sourceRules,
+      context.characterName ? `Character: ${context.characterName}` : '',
+      context.gender ? `Character gender: ${context.gender}` : '',
+      context.translationGender ? `Translation grammatical gender: ${context.translationGender}` : '',
+      context.speakingStyle ? `Declared speaking style: ${context.speakingStyle}` : '',
+      context.characterVoiceApplied ? `Character voice: ${context.characterVoiceSummary}` : '',
+      context.sceneToneApplied ? `Scene tone: ${context.sceneToneSummary}` : '',
+      styleHint ? `Style library:\n${styleHint}` : '',
+    ].filter(Boolean).join('\n')
+  }
 
   const buildAutocorrectUserPrompt = (payload: {
     sourceEn: string
@@ -6863,16 +7063,21 @@ export default function App(): React.ReactElement {
     previousContext: string[]
     nextContext: string[]
     terminology: string[]
+    mode: AutocorrectMode
+    hasSource: boolean
+    protectedTerms: string[]
   }): string => {
     const prev = payload.previousContext.filter(Boolean)
     const next = payload.nextContext.filter(Boolean)
     return [
-      `SOURCE_EN: ${payload.sourceEn}`,
+      payload.hasSource ? `SOURCE_EN: ${payload.sourceEn}` : 'SOURCE_EN: [unavailable]',
       `CURRENT_PL: ${payload.currentPl}`,
       payload.characterName ? `CHARACTER: ${payload.characterName}` : '',
       prev.length ? `PREVIOUS_LINES:\n${prev.map(line => `- ${line}`).join('\n')}` : '',
       next.length ? `NEXT_LINES:\n${next.map(line => `- ${line}`).join('\n')}` : '',
       payload.terminology.length ? `TERMINOLOGY (source -> target): ${payload.terminology.join('; ')}` : '',
+      payload.protectedTerms.length ? `PROTECTED_TERMS (do not change): ${payload.protectedTerms.join('; ')}` : '',
+      `MODE: ${payload.mode.toUpperCase()}`,
       '',
       'Return ONLY the corrected Polish line or [[UNCERTAIN]].',
     ].filter(Boolean).join('\n')
@@ -6936,10 +7141,15 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
     extraHeaders?: Record<string, string>,
   ): Promise<string> => {
     const response = await fetchWithTimeout(endpoint, {
@@ -6954,7 +7164,7 @@ export default function App(): React.ReactElement {
         temperature: 0.2,
         max_tokens: 256,
         messages: [
-          { role: 'system', content: buildAutocorrectSystemPrompt(context, styleHint) },
+          { role: 'system', content: buildAutocorrectSystemPrompt(context, styleHint, mode, hasSource) },
           { role: 'user', content: buildAutocorrectUserPrompt(payload) },
         ],
       }),
@@ -6976,14 +7186,19 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('openai')
     const model = resolveModelForProvider('openai') || 'gpt-4o-mini'
-    return postEditViaOpenAiCompatible('https://api.openai.com/v1/chat/completions', key, model, payload, signal, context, styleHint)
+    return postEditViaOpenAiCompatible('https://api.openai.com/v1/chat/completions', key, model, payload, signal, context, styleHint, mode, hasSource)
   }
 
   const postEditViaOpenRouter = async (
@@ -6994,10 +7209,15 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('openrouter')
     const model = resolveModelForProvider('openrouter') || 'openai/gpt-4o-mini'
@@ -7009,6 +7229,8 @@ export default function App(): React.ReactElement {
       signal,
       context,
       styleHint,
+      mode,
+      hasSource,
       { 'HTTP-Referer': 'https://animegate.local', 'X-Title': 'AnimeGate Translator' },
     )
   }
@@ -7021,14 +7243,19 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('groq')
     const model = resolveModelForProvider('groq') || 'llama-3.3-70b-versatile'
-    return postEditViaOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', key, model, payload, signal, context, styleHint)
+    return postEditViaOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', key, model, payload, signal, context, styleHint, mode, hasSource)
   }
 
   const postEditViaTogether = async (
@@ -7039,14 +7266,19 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('together')
     const model = resolveModelForProvider('together') || 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
-    return postEditViaOpenAiCompatible('https://api.together.xyz/v1/chat/completions', key, model, payload, signal, context, styleHint)
+    return postEditViaOpenAiCompatible('https://api.together.xyz/v1/chat/completions', key, model, payload, signal, context, styleHint, mode, hasSource)
   }
 
   const postEditViaMistral = async (
@@ -7057,14 +7289,19 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('mistral')
     const model = resolveModelForProvider('mistral') || 'mistral-small-latest'
-    return postEditViaOpenAiCompatible('https://api.mistral.ai/v1/chat/completions', key, model, payload, signal, context, styleHint)
+    return postEditViaOpenAiCompatible('https://api.mistral.ai/v1/chat/completions', key, model, payload, signal, context, styleHint, mode, hasSource)
   }
 
   const postEditViaClaude = async (
@@ -7075,10 +7312,15 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('claude')
     const response = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
@@ -7092,7 +7334,7 @@ export default function App(): React.ReactElement {
         model: CLAUDE_LOCKED_MODEL,
         max_tokens: 256,
         temperature: 0.2,
-        system: buildAutocorrectSystemPrompt(context, styleHint),
+        system: buildAutocorrectSystemPrompt(context, styleHint, mode, hasSource),
         messages: [{ role: 'user', content: buildAutocorrectUserPrompt(payload) }],
       }),
     }, 20000, signal)
@@ -7113,10 +7355,15 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('gemini')
     const model = resolveModelForProvider('gemini') || 'gemini-2.0-flash'
@@ -7125,7 +7372,7 @@ export default function App(): React.ReactElement {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: buildAutocorrectSystemPrompt(context, styleHint) }] },
+        systemInstruction: { parts: [{ text: buildAutocorrectSystemPrompt(context, styleHint, mode, hasSource) }] },
         contents: [{ parts: [{ text: buildAutocorrectUserPrompt(payload) }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
       }),
@@ -7148,10 +7395,15 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
     const key = ensureProviderReady('cohere')
     const model = resolveModelForProvider('cohere') || 'command-r'
@@ -7165,7 +7417,7 @@ export default function App(): React.ReactElement {
         model,
         temperature: 0.2,
         max_tokens: 256,
-        preamble: buildAutocorrectSystemPrompt(context, styleHint),
+        preamble: buildAutocorrectSystemPrompt(context, styleHint, mode, hasSource),
         message: buildAutocorrectUserPrompt(payload),
       }),
     }, 20000, signal)
@@ -7187,19 +7439,24 @@ export default function App(): React.ReactElement {
       previousContext: string[]
       nextContext: string[]
       terminology: string[]
+      mode: AutocorrectMode
+      hasSource: boolean
+      protectedTerms: string[]
     },
     signal: AbortSignal,
     context: TranslationRequestContext,
     styleHint: string,
+    mode: AutocorrectMode,
+    hasSource: boolean,
   ): Promise<string> => {
-    if (provider === 'openai') return postEditViaOpenAi(payload, signal, context, styleHint)
-    if (provider === 'openrouter') return postEditViaOpenRouter(payload, signal, context, styleHint)
-    if (provider === 'groq') return postEditViaGroq(payload, signal, context, styleHint)
-    if (provider === 'together') return postEditViaTogether(payload, signal, context, styleHint)
-    if (provider === 'mistral') return postEditViaMistral(payload, signal, context, styleHint)
-    if (provider === 'claude') return postEditViaClaude(payload, signal, context, styleHint)
-    if (provider === 'gemini') return postEditViaGemini(payload, signal, context, styleHint)
-    if (provider === 'cohere') return postEditViaCohere(payload, signal, context, styleHint)
+    if (provider === 'openai') return postEditViaOpenAi(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'openrouter') return postEditViaOpenRouter(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'groq') return postEditViaGroq(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'together') return postEditViaTogether(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'mistral') return postEditViaMistral(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'claude') return postEditViaClaude(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'gemini') return postEditViaGemini(payload, signal, context, styleHint, mode, hasSource)
+    if (provider === 'cohere') return postEditViaCohere(payload, signal, context, styleHint, mode, hasSource)
     throw new ProviderError('unsupported-provider', `Nieznany provider post-edit: ${provider}`)
   }
 
@@ -8640,30 +8897,34 @@ export default function App(): React.ReactElement {
       return
     }
 
+    const autocorrectMode = styleSettings.autocorrectMode ?? 'standard'
+    const rowsToEdit = rowsDataRef.current.filter(row => lineHasTranslatedContent(row))
+    if (!rowsToEdit.length) {
+      appendTranslationLog('Autokorekta: brak linii z tlumaczeniem.')
+      return
+    }
+
+    const hasSourceLines = rowsToEdit.some(row => normalizeSemanticWhitespace(stripAssFormattingForTranslation(row.sourceRaw || row.source)))
     const llmProviders = ['openai', 'openrouter', 'groq', 'together', 'mistral', 'claude', 'gemini', 'cohere']
     const [providerId] = selectedModelId.split(':')
     const providersToTry = [
       ...(llmProviders.includes(providerId) ? [providerId] : []),
       ...llmProviders.filter(provider => provider !== providerId),
     ]
-    const eligibleProviders = providersToTry.filter(provider => {
-      try {
-        ensureProviderReady(provider)
-        return true
-      } catch (error) {
-        const message = error instanceof ProviderError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : 'Nieznany blad'
-        appendTranslationLog(`Autokorekta: pomijam provider ${provider} (${message}).`)
-        return false
-      }
-    })
-    if (!eligibleProviders.length) {
+    const eligibleProviders = (autocorrectMode === 'safe' || !hasSourceLines)
+      ? []
+      : providersToTry.filter(provider => {
+        try {
+          ensureProviderReady(provider)
+          return true
+        } catch (error) {
+          const message = error instanceof ProviderError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : 'Nieznany blad'
+          appendTranslationLog(`Autokorekta: pomijam provider ${provider} (${message}).`)
+          return false
+        }
+      })
+    if (autocorrectMode !== 'safe' && hasSourceLines && !eligibleProviders.length) {
       appendTranslationLog('Autokorekta: brak dostepnych providerow LLM (dodaj klucz API).')
-      return
-    }
-
-    const rowsToEdit = rowsDataRef.current.filter(row => lineHasTranslatedContent(row))
-    if (!rowsToEdit.length) {
-      appendTranslationLog('Autokorekta: brak linii z tlumaczeniem.')
       return
     }
 
@@ -8671,7 +8932,7 @@ export default function App(): React.ReactElement {
     stopAutoCorrectRef.current = false
     const controller = new AbortController()
     activeAutoCorrectAbortRef.current = controller
-    appendTranslationLog(`Autokorekta: start (${rowsToEdit.length} linii).`)
+    appendTranslationLog(`Autokorekta: start (${rowsToEdit.length} linii, tryb: ${autocorrectMode}).`)
 
     try {
       const batches: DialogRow[][] = []
@@ -8693,6 +8954,7 @@ export default function App(): React.ReactElement {
           const styleEntry = selectStyleLibraryEntry(context)
           const styleHint = formatStyleLibraryEntry(styleEntry)
           const termHints = extractTermHints(row.sourceRaw || row.source).map(term => `${term.source} -> ${term.target}`)
+          const protectedTerms = buildAutocorrectProtectedTerms(row, context)
           const previousContext: string[] = []
           const nextContext: string[] = []
           for (let i = Math.max(0, rowIndex - 3); i < rowIndex; i += 1) {
@@ -8704,19 +8966,37 @@ export default function App(): React.ReactElement {
             if (line) nextContext.push(line)
           }
 
+          const sourceEn = normalizeSemanticWhitespace(stripAssFormattingForTranslation(row.sourceRaw || row.source))
+          const hasSource = Boolean(sourceEn)
+
+          if (autocorrectMode === 'safe' || !hasSource) {
+            const safeResult = applySafeAutocorrect(row.target, protectedTerms)
+            if (safeResult.changed) {
+              updates.set(row.id, {
+                target: safeResult.text,
+                requiresManualCheck: row.requiresManualCheck ?? false,
+              })
+            }
+            await waitDuringAutoCorrect(80)
+            continue
+          }
+
           const payload = {
-            sourceEn: normalizeSemanticWhitespace(stripAssFormattingForTranslation(row.sourceRaw || row.source)),
+            sourceEn,
             currentPl: row.target,
             characterName: context.characterName,
             previousContext,
             nextContext,
             terminology: termHints,
+            mode: autocorrectMode,
+            hasSource,
+            protectedTerms,
           }
 
           try {
             const chainResult = await runProviderChain(
               eligibleProviders,
-              async provider => postEditViaProvider(provider, payload, controller.signal, context, styleHint),
+              async provider => postEditViaProvider(provider, payload, controller.signal, context, styleHint, autocorrectMode, hasSource),
               {
                 maxRetries: 2,
                 shouldRetry: error => error instanceof ProviderError
@@ -8728,6 +9008,15 @@ export default function App(): React.ReactElement {
             const normalized = normalizeAutocorrectOutput(chainResult.value)
             if (normalized.uncertain || !normalized.text) {
               appendTranslationLog(`Autokorekta: linia ${row.id} -> niepewna (UNCERTAIN).`)
+              updates.set(row.id, {
+                target: row.target,
+                requiresManualCheck: true,
+              })
+              continue
+            }
+
+            if (isOverAggressiveShortLineRewrite(row.target, normalized.text)) {
+              appendTranslationLog(`Autokorekta: linia ${row.id} -> zbyt agresywna zmiana krotkiej linii.`)
               updates.set(row.id, {
                 target: row.target,
                 requiresManualCheck: true,
@@ -8750,7 +9039,8 @@ export default function App(): React.ReactElement {
               projectTerms,
             )
             const stabilized = stabilizeTonePunctuation(row.sourceRaw || row.source, enforced)
-            const leakCheck = detectLanguageLeak(stabilized, { terms: projectTerms })
+            const safePolished = applySafeAutocorrect(stabilized, protectedTerms).text
+            const leakCheck = detectLanguageLeak(safePolished, { terms: projectTerms })
             if (leakCheck.englishTokens.length > 0 || leakCheck.mixed) {
               appendTranslationLog(`Autokorekta: linia ${row.id} -> wykryto angielski leak, oznaczam do sprawdzenia.`)
               updates.set(row.id, {
@@ -8760,7 +9050,7 @@ export default function App(): React.ReactElement {
               continue
             }
 
-            const nextTarget = stabilized.trim() ? stabilized : row.target
+            const nextTarget = safePolished.trim() ? safePolished : row.target
             updates.set(row.id, {
               target: nextTarget,
               requiresManualCheck: row.requiresManualCheck ?? false,

@@ -13,6 +13,8 @@ import { resolveCharacterByName } from './project/characterNameMatching'
 
 export type CharacterGender = 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Unknown'
 
+export type AutocorrectMode = 'safe' | 'standard' | 'stylistic'
+
 export type TranslationStyleId =
   | 'neutral'
   | 'formal'
@@ -65,6 +67,7 @@ export interface ProjectTranslationStyleSettings {
   globalStyleProfile: ProjectGlobalStyleProfile
   characters: CharacterStyleAssignment[]
   autocorrectEnabled: boolean
+  autocorrectMode: AutocorrectMode
   updatedAt: string
 }
 
@@ -221,6 +224,7 @@ export function createProjectStyleSettings(
     globalStyle: 'neutral',
     globalStyleProfile: createDefaultGlobalStyleProfile('neutral'),
     autocorrectEnabled: true,
+    autocorrectMode: 'standard',
     updatedAt: new Date().toISOString(),
     characters: characters.map(character => ({
       ...character,
@@ -255,6 +259,7 @@ export function loadProjectStyleSettings(
       globalStyle: parsed.globalStyle ?? 'neutral',
       globalStyleProfile: normalizeGlobalStyleProfile(parsed.globalStyleProfile, parsed.globalStyle ?? 'neutral'),
       autocorrectEnabled: parsed.autocorrectEnabled ?? true,
+      autocorrectMode: parsed.autocorrectMode ?? 'standard',
       updatedAt: parsed.updatedAt ?? new Date().toISOString(),
       characters: [
         ...baseCharacters.map(base => {

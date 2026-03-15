@@ -100,6 +100,7 @@ export interface DiskProjectConfigV1 {
     }
     characters: DiskProjectCharacter[]
     autocorrectEnabled?: boolean
+    autocorrectMode?: string
     updatedAt: string
   }
 }
@@ -257,6 +258,7 @@ export function buildDiskProjectConfig(input: BuildProjectConfigInput): DiskProj
       globalStyleProfile: input.styleSettings.globalStyleProfile,
       characters: input.styleSettings.characters.map(mapCharacterToDisk),
       autocorrectEnabled: input.styleSettings.autocorrectEnabled,
+      autocorrectMode: input.styleSettings.autocorrectMode,
       updatedAt: now,
     },
   }
@@ -291,6 +293,7 @@ export function hydrateStateFromDiskProject(config: DiskProjectConfigV1): Hydrat
       : fallbackStyleSettings.globalStyleProfile,
     characters: styleCharacters.map((item, idx) => mapDiskToCharacter(item, idx + 1)),
     autocorrectEnabled: config.translationStyleSettings?.autocorrectEnabled ?? fallbackStyleSettings.autocorrectEnabled,
+    autocorrectMode: config.translationStyleSettings?.autocorrectMode ?? fallbackStyleSettings.autocorrectMode,
     updatedAt: config.translationStyleSettings?.updatedAt || new Date().toISOString(),
   }
 
