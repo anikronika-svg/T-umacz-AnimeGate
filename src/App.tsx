@@ -3300,6 +3300,37 @@ interface CharacterModalProps {
 
   const normalizeDraftCharacters = (list: CharacterStyleAssignment[]): CharacterStyleAssignment[] => dedupeAssignments(list)
 
+  const characterSourceProvider = useMemo(
+    () => buildCharacterSourceProvider(characterSourceId, {
+      malClientId: (apiConfig.mal ?? apiConfig['mal'] ?? '').trim(),
+      apiRequest: window.electronAPI?.apiRequest,
+    }),
+    [characterSourceId, apiConfig],
+  )
+
+  const {
+    search,
+    setSearch,
+    searchResults,
+    selectedAnime,
+    selectedAnimeCast: selectedAnimeCastRaw,
+    isSearching,
+    isLoadingCast,
+    searchError,
+    reset: resetImportState,
+    searchAnime: handleSearchCharacters,
+    loadCast: handleLoadCast,
+  } = useCharacterImportStep({
+    provider: characterSourceProvider,
+    characterSourceId,
+    onProjectMetaUpdate,
+  })
+
+  const selectedAnimeCast = useMemo(
+    () => dedupeImportedCast(selectedAnimeCastRaw),
+    [selectedAnimeCastRaw],
+  )
+
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setStep('step1')
@@ -3584,37 +3615,6 @@ interface CharacterModalProps {
     }))
     return { applied, skipped }
   }
-
-  const characterSourceProvider = useMemo(
-    () => buildCharacterSourceProvider(characterSourceId, {
-      malClientId: (apiConfig.mal ?? apiConfig['mal'] ?? '').trim(),
-      apiRequest: window.electronAPI?.apiRequest,
-    }),
-    [characterSourceId, apiConfig],
-  )
-
-  const {
-    search,
-    setSearch,
-    searchResults,
-    selectedAnime,
-    selectedAnimeCast: selectedAnimeCastRaw,
-    isSearching,
-    isLoadingCast,
-    searchError,
-    reset: resetImportState,
-    searchAnime: handleSearchCharacters,
-    loadCast: handleLoadCast,
-  } = useCharacterImportStep({
-    provider: characterSourceProvider,
-    characterSourceId,
-    onProjectMetaUpdate,
-  })
-
-  const selectedAnimeCast = useMemo(
-    () => dedupeImportedCast(selectedAnimeCastRaw),
-    [selectedAnimeCastRaw],
-  )
 
   useEffect(() => {
     setSelectedAniCastIds(new Set())
