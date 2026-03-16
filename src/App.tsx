@@ -3556,8 +3556,6 @@ interface CharacterModalProps {
     })
   }, [open, workerCast])
 
-  if (!open) return null
-
   const applyGlobalToAll = (): void => {
     setDraft(prev => ({
       ...prev,
@@ -3628,6 +3626,8 @@ interface CharacterModalProps {
       return next
     })
   }, [selectedAnimeCast])
+
+  if (!open) return null
 
   const importCharactersFromSelectedAnime = (): void => {
     if (!workerCast.length) return
