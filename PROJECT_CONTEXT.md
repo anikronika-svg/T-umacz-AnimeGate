@@ -1,28 +1,31 @@
 # PROJECT CONTEXT – Tlumacz AnimeGate
 
+## 0) Snapshot (stan na teraz)
+- Wersja aplikacji: `1.0.64` (package.json).
+- Stabilny build: `release/AnimeGate-Translator-Setup.exe` + `release/win-unpacked`.
+- Krok 1: wybor zrodla postaci (AniList / MyAnimeList) + pobieranie opisu postaci i metadanych.
+- Nowa architektura: providery `characterSources/` + wspolny model `ImportedCharacter` + hook `useCharacterImportStep`.
+- MAL API: oficjalne v2, bez scrapowania, Client ID wymagany.
+
 ## 1) Stan projektu
-- Data aktualizacji: 2026-03-14.
+- Data aktualizacji: 2026-03-16.
 - Repozytorium Git: aktywne, branch `main`, zdalne `origin` (GitHub).
-- Aktualna wersja aplikacji (`package.json`): `1.0.52`.
-- Ostatnie commity:
-  - `f9ea76b` – Krok 0 foundation (projekt dyskowy + minimalny UI)
-  - `13a9405` – auto-update IPC + preload + minimalny UI statusu
-  - `48ca83b` – workflow release + bump do `1.0.1`
-  - `35138bf` – foundation auto-update (electron-updater + publish config + release:win)
-  - `ae545f1` – baseline verify + testy parsera ASS round-trip (Vitest + fixtures)
-  - `01ba205` – konfiguracja instalatora NSIS + `build:win`
-  - `b129606` – stabilizacja wyboru silnika (stop flicker / auto-switch loop)
-  - `d83115a` – batch import z folderu: rozszerzony parser nazw + manual confirm + fallback dla source bez prefixu, bump `1.0.49`
+- Aktualna wersja aplikacji (`package.json`): `1.0.64`.
+- Ostatnie istotne commity:
+  - `f71a84b` – Krok 1: wybor zrodla postaci (AniList/MAL) + wspolny model `ImportedCharacter` + providery + hook UI.
+  - `e919a4c` – bump wersji do `1.0.64`.
+  - `d83115a` – batch import z folderu: rozszerzony parser nazw + manual confirm + fallback dla source bez prefixu.
 
 ## 2) Stack i architektura
 - Electron (main/preload) + React + TypeScript + Vite.
 - Kluczowe pliki:
   - `src/App.tsx` – glowny renderer i logika aplikacji.
-  - `src/hooks/useUpdaterStatus.ts` – hook renderera do subskrypcji statusu updatera i akcji check/download/install.
-  - `electron/projectStorage.ts` – trwały storage projektu na dysku (`animegate-project.json`, schema v1).
-  - `src/subtitleParser.ts` – parser i zapis ASS/SSA (`tlmode`).
-  - `src/anilist.ts` – integracja AniList i merge castu serii.
+  - `src/hooks/useCharacterImportStep.ts` – logika Kroku 1 (wyszukiwanie anime, pobieranie postaci, source switch).
+  - `src/characterSources/*` – providery zrodel postaci (AniList/MAL) + wspolny model.
+  - `src/project/characterProfileAnalysis.ts` – analiza i prefill profilu postaci (zrodlo-agnostyczne).
   - `src/translationStyle.ts` – style, archetypy, profile postaci, kontekst tlumaczenia.
+  - `src/subtitleParser.ts` – parser i zapis ASS/SSA (`tlmode`).
+  - `electron/projectStorage.ts` – trwały storage projektu na dysku (`animegate-project.json`, schema v1).
   - `electron/main.ts` – okno Electron, IPC, ffmpeg/waveform.
   - `electron/updater.ts` – runtime updater (main process), check for updates po starcie + event logging.
   - `electron/preload.ts` – `window.electronAPI`.
@@ -68,16 +71,28 @@ Kluczowe wymagania:
 - `tlmode` kompatybilny z Kainote (dual text rozdzielony poprawnie).
 
 ### 3.3 Postacie i style (Krok 1/2/3)
-- Krok 1: AniList search + baza robocza castu.
+- Krok 1: wybor zrodla postaci (AniList / MAL) + wyszukiwanie anime + baza robocza castu.
 - Krok 2: korekta plci.
 - Krok 3: global style + per-postac style, archetyp, cechy i opis.
 - Naprawione dopasowanie nazw postaci:
   - normalizacja ignoruje nawiasy i dopiski techniczne (`Krai`, `Krai(M)`, `Krai (mysli)` -> jedna baza).
 - Naprawione dedupe:
   - Krok 3 renderuje finalna, zdeduplikowana liste postaci (source of truth po merge).
+ - Rekordy postaci w bazie roboczej pamietaja zrodlo (`anilist` / `mal`) i pola zewnetrzne (`sourceAnimeId`, `sourceCharacterId`, `voiceActorId`).
 
-### 3.4 AniList i prefill profilu
-- Pobierane dane: nazwa, rola, plec, obraz, description.
+### 3.3.1 Wspolny model danych postaci
+- `ImportedCharacter` (w `src/characterSources/types.ts`) ujednolica dane z AniList i MAL.
+- Pola kluczowe:
+  - `source`, `sourceAnimeId`, `sourceCharacterId`
+  - `animeTitle`, `nameFull`, `nameFirst`, `nameLast`, `nameNative`
+  - `role`, `gender`, `imageUrl`
+  - `voiceActorName`, `voiceActorLanguage`, `voiceActorId`
+  - `description`, `raw`
+- Dalsze kroki (Krok 2/3) nie musza znac zrodla – pracuja na wspolnym modelu.
+
+### 3.4 Zrodla postaci i prefill profilu
+- AniList: nazwa, rola, plec, obraz, description, seiyuu (if available).
+- MyAnimeList (API v2): nazwa, rola, obraz, description (about), plec (gdy dostepne), seiyuu (if available).
 - Generowane pola:
   - `descriptionShort`, `personalityTraits`.
   - inferencje: `inferredArchetype`, `inferredStyle`, `inferredMannerOfAddress`, `inferredPolitenessLevel`, `inferredVocabularyType`, `inferredTemperament`.
@@ -92,7 +107,7 @@ Kluczowe wymagania:
   - cechy mowienia,
   - notatke postaci,
   - poziom grzecznosci/temperament/slownictwo,
-  - skrot opisu AniList.
+  - skrot opisu postaci (niezaleznie od zrodla).
 
 ### 3.6 Wybor silnika (engine selector)
 - Dropdown jest kontrolowany przez jedno zrodlo prawdy (`selectedModelId`).
@@ -119,6 +134,10 @@ Kluczowe wymagania:
 - Skonfigurowane providery: libre, mymemory, deepl, openai, openrouter, groq, together, mistral, claude, gemini, cohere, google, azure, papago, yandex.
 - Czesciowo placeholdery dla providerow niepodlaczonych w request layer.
 - API config: localStorage + trwały zapis przez IPC.
+- MyAnimeList API (v2):
+  - wymaga `Client ID` (bez OAuth dla odczytu publicznego),
+  - klucz konfigurowany w ustawieniach API (renderer), przesylany do main przez IPC,
+  - gdy brak konfiguracji: UI pokazuje czytelny komunikat, opcja MAL widoczna.
 
 ## 5) Build i dystrybucja
 - Skrypty:
@@ -153,7 +172,7 @@ Kluczowe wymagania:
 - Nadal do domkniecia manualnie w UI (regresja/UX):
   - pelny scenariusz E2E krokow postaci na realnym pliku,
   - wizualna walidacja braku duplikatow i prefilla na kartach.
-  - weryfikacja GUI z `release/win-unpacked` (aktualnie proces startuje i natychmiast sie zamyka).
+  - weryfikacja GUI na latest build (1.0.64) po zmianach w Kroku 1 (AniList/MAL).
 
 ## 6.1) QA / buildy (1.0.49)
 - Testy: `npm run test -- --run` (OK).
@@ -217,6 +236,14 @@ Kluczowe wymagania:
 ## 8.2) Telemetria zrodel tlumaczen (1.0.50)
 - Per linia zapisywane: `translationSource`, `tmMatchType`, `tmConfidence`.
 - Raport po tlumaczeniu: licznik zrodel (reviewed/trusted/project/global/patterns/model), `requiresManualCheck`, `repaired`.
+
+## 8.3) Krok 1: AniList + MyAnimeList (1.0.64)
+- UI: wybor zrodla postaci (AniList / MAL), dynamiczne etykiety i komunikaty stanu.
+- Providery: `anilistProvider`, `malProvider` w `src/characterSources/`.
+- Wspolny model `ImportedCharacter` i mapowanie do dalszych krokow.
+- MAL API v2 (bez scrapowania): search anime, lista postaci, detale postaci (opis, gender, seiyuu).
+- Hook `useCharacterImportStep` spina wyszukiwanie, wybor anime, pobieranie castu i statusy.
+- Zachowana logika zaznaczania/dodawania, z badge zrodla przy rekordach.
 
 ## 9) Auto-update (analiza stanu przed wdrozeniem)
 - Etap foundation (bez zmiany runtime/UI) został wdrozony:
