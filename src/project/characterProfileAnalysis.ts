@@ -1,5 +1,5 @@
-import type { AniListCharacter } from '../anilist'
 import type { CharacterStyleProfile } from '../translationStyle'
+import type { ImportedCharacter } from '../characterSources/types'
 
 function compact(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -76,23 +76,20 @@ function inferFromText(description: string): {
   }
 }
 
-export function analyzeCharacterProfileFromAniList(cast: AniListCharacter): Partial<CharacterStyleProfile> {
-  const description = compact(cast.description)
-  const descriptionShort = compact(cast.descriptionShort)
-  const traitsText = cast.personalityTraits.map(compact).filter(Boolean).slice(0, 6).join(', ')
+export function analyzeCharacterProfileFromSource(cast: ImportedCharacter): Partial<CharacterStyleProfile> {
+  const description = compact(cast.description ?? '')
   const inferred = inferFromText(description)
-
-  const summary = firstSentence(descriptionShort || description)
-  const roleHint = cast.roleLabel !== 'Unknown' ? `Rola: ${cast.roleLabel}.` : ''
+  const summary = firstSentence(description)
+  const roleHint = cast.role ? `Rola: ${cast.role}.` : ''
 
   return {
-    speakingTraits: traitsText || inferred.speakingTraits,
+    speakingTraits: inferred.speakingTraits,
     characterNote: summary || roleHint,
     personalitySummary: summary || roleHint,
     anilistDescription: description,
-    mannerOfAddress: cast.inferredMannerOfAddress || inferred.mannerOfAddress,
-    politenessLevel: cast.inferredPolitenessLevel || inferred.politenessLevel,
-    vocabularyType: cast.inferredVocabularyType || inferred.vocabularyType,
-    temperament: cast.inferredTemperament || inferred.temperament,
+    mannerOfAddress: inferred.mannerOfAddress,
+    politenessLevel: inferred.politenessLevel,
+    vocabularyType: inferred.vocabularyType,
+    temperament: inferred.temperament,
   }
 }

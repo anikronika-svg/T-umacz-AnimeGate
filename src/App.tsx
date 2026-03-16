@@ -23,6 +23,7 @@ import type { AnimeSearchResult, CharacterSourceId, ImportedCharacter } from './
 import { buildCharacterSourceProvider } from './characterSources/characterSourceRegistry'
 import { buildAssOrSsaContent, parseAssOrSsa, type ParsedSubtitleFile } from './subtitleParser'
 import { useUpdaterStatus, type UpdaterStatus } from './hooks/useUpdaterStatus'
+import { useCharacterImportStep } from './hooks/useCharacterImportStep'
 import {
   PROJECT_SCHEMA_VERSION,
   buildDiskProjectConfig as mapAppStateToProjectConfig,
@@ -3011,6 +3012,7 @@ interface ApiProvider {
   title: string
   placeholder: string
   modelOptions?: string[]
+  role?: 'translation' | 'metadata'
   pricing: 'free' | 'free_tier' | 'paid'
   pricingNote: string
 }
@@ -3023,6 +3025,7 @@ const API_CONFIG_STORAGE_KEY = `animegate.api-config.${DEFAULT_PROJECT_ID}.v1`
 const API_PROVIDERS: ApiProvider[] = [
   { id: 'libre', title: 'LibreTranslate', placeholder: 'Libre key (lub puste dla self-host)', modelOptions: ['libre-default'], pricing: 'free', pricingNote: 'Darmowe przy self-host; publiczne instancje zwykle limitowane.' },
   { id: 'mymemory', title: 'MyMemory Translation API', placeholder: 'API key (opcjonalny)', modelOptions: ['mymemory-default'], pricing: 'free', pricingNote: 'Darmowe limity, klucz opcjonalny dla wyższych limitów.' },
+  { id: 'mal', title: 'MyAnimeList API', placeholder: 'MAL Client ID', pricing: 'free_tier', pricingNote: 'Publiczne API, wymagany Client ID.', role: 'metadata' },
   { id: 'groq', title: 'Groq', placeholder: 'gsk_...', modelOptions: ['llama-3.3-70b-versatile', 'deepseek-r1-distill-llama-70b'], pricing: 'free_tier', pricingNote: 'Darmowy tier z limitami.' },
   { id: 'gemini', title: 'Google Gemini', placeholder: 'AIza...', modelOptions: ['gemini-2.0-flash', 'gemini-1.5-pro'], pricing: 'free_tier', pricingNote: 'Darmowy tier przez AI Studio (limity).' },
   { id: 'openrouter', title: 'OpenRouter', placeholder: 'sk-or-v1-...', modelOptions: ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku'], pricing: 'free_tier', pricingNote: 'Część modeli ma darmowe limity.' },
@@ -3039,6 +3042,7 @@ const API_PROVIDERS: ApiProvider[] = [
 ]
 
 const TRANSLATION_MODEL_OPTIONS: Array<{ id: string; label: string }> = API_PROVIDERS
+  .filter(provider => provider.role !== 'metadata')
   .flatMap(provider => (provider.modelOptions ?? []).map(model => ({
     id: `${provider.id}:${model}`,
     label: `Silnik: ${provider.id} / ${model}`,
@@ -3112,7 +3116,11 @@ function ApiModal({
         style={{ width: '100%', height: 24, background: '#2b2d35', border: `1px solid ${C.border}`, color: C.text, padding: '0 6px' }}
       />
       <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <button style={BASE_BTN} onClick={() => onTestProvider(provider.id)}>Test polaczenia</button>
+        {provider.role !== 'metadata' ? (
+          <button style={BASE_BTN} onClick={() => onTestProvider(provider.id)}>Test polaczenia</button>
+        ) : (
+          <span style={{ fontSize: 11, color: C.textDim }}>Metadata only</span>
+        )}
         <span style={{ fontSize: 11, color: testStatusByProvider[provider.id]?.startsWith('OK') ? C.accentG : C.textDim }}>
           {testStatusByProvider[provider.id] ?? 'Brak testu'}
         </span>
@@ -3170,14 +3178,7 @@ interface CharacterModalProps {
   const [step, setStep] = useState<CharacterStep>('step1')
   const [draft, setDraft] = useState<ProjectTranslationStyleSettings>(settings)
   const [isCharacterNotesOpen, setCharacterNotesOpen] = useState(false)
-  const [search, setSearch] = useState('')
   const [characterSourceId, setCharacterSourceId] = useState<CharacterSourceId>('anilist')
-  const [searchResults, setSearchResults] = useState<AnimeSearchResult[]>([])
-  const [selectedAnime, setSelectedAnime] = useState<AnimeSearchResult | null>(null)
-  const [selectedAnimeCast, setSelectedAnimeCast] = useState<ImportedCharacter[]>([])
-  const [isSearching, setIsSearching] = useState(false)
-  const [isLoadingCast, setIsLoadingCast] = useState(false)
-  const [searchError, setSearchError] = useState('')
   const [workerCast, setWorkerCast] = useState<ImportedCharacter[]>([])
   const [selectedAniCastIds, setSelectedAniCastIds] = useState<Set<string>>(new Set())
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<string>>(new Set())
@@ -3225,7 +3226,7 @@ interface CharacterModalProps {
     const byKey = new Map<string, CharacterStyleAssignment>()
     list.forEach(item => {
       const normalizedName = normalizeCharacterName(item.name)
-      const key = normalizedName ? `name:${normalizedName}` : characterKeyFromNameRole(item.name, item.anilistRole)
+      const key = normalizedName ? `name:${normalizedName}` : characterKeyFromNameRole(item.name, item.sourceRole ?? item.anilistRole)
       const existing = byKey.get(key)
       if (!existing) {
         byKey.set(key, item)
@@ -3275,6 +3276,14 @@ interface CharacterModalProps {
         name: existing.name || item.name,
         displayName: existing.displayName || item.displayName || existing.name || item.name,
         originalName: existing.originalName || item.originalName || '',
+        sourceProvider: existing.sourceProvider || item.sourceProvider,
+        sourceAnimeId: existing.sourceAnimeId || item.sourceAnimeId,
+        sourceCharacterId: existing.sourceCharacterId || item.sourceCharacterId,
+        sourceRole: existing.sourceRole || item.sourceRole,
+        sourceVoiceActorName: existing.sourceVoiceActorName || item.sourceVoiceActorName,
+        sourceVoiceActorLanguage: existing.sourceVoiceActorLanguage || item.sourceVoiceActorLanguage,
+        sourceVoiceActorId: existing.sourceVoiceActorId || item.sourceVoiceActorId,
+        sourceDescription: existing.sourceDescription || item.sourceDescription,
         anilistCharacterId: existing.anilistCharacterId ?? item.anilistCharacterId ?? null,
         anilistRole: existing.anilistRole || item.anilistRole,
         imageUrl: existing.imageUrl || item.imageUrl || null,
@@ -3306,14 +3315,7 @@ interface CharacterModalProps {
           })),
         ),
       })
-      setSearch('')
-      setSearchResults([])
-      // Step 1 is a session workspace: always start clean until user performs a search.
-      setSelectedAnime(null)
-      setSelectedAnimeCast([])
-      setIsSearching(false)
-      setIsLoadingCast(false)
-      setSearchError('')
+      resetImportState()
       setSelectedAniCastIds(new Set())
       setSelectedWorkerIds(new Set())
       setBrokenImageKeys(new Set())
@@ -3333,7 +3335,7 @@ interface CharacterModalProps {
       setWorkerCast([])
     }
     wasOpenRef.current = open
-  }, [open, settings, rows, projectMeta])
+  }, [open, settings, rows, projectMeta, resetImportState])
 
   useEffect(() => {
     localStorage.setItem(charImageCacheKey(projectId), JSON.stringify(imageCacheByName))
@@ -3342,7 +3344,7 @@ interface CharacterModalProps {
   const applyGenderForCharacter = (characterName: string, gender: CharacterGender): void => {
     const key = normalizeCharacterName(characterName)
     setWorkerCast(prev => prev.map(cast => (
-      normalizeCharacterName(cast.name) === key
+      normalizeCharacterName(cast.nameFull) === key
         ? { ...cast, gender }
         : cast
     )))
@@ -3364,7 +3366,7 @@ interface CharacterModalProps {
     () => (
       step2ShowUnknownOnly
         ? workerCast.filter(item => {
-          const current = draft.characters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.name))
+          const current = draft.characters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.nameFull))
           const effectiveGender = current?.gender ?? item.gender
           return effectiveGender === 'Unknown'
         })
@@ -3386,12 +3388,24 @@ interface CharacterModalProps {
     return [...byName.values()].sort((a, b) => b.lineCount - a.lineCount || a.name.localeCompare(b.name))
   }, [rows])
 
+  const normalizeImportedGender = (value?: string | CharacterGender | null): CharacterGender => {
+    if (!value) return 'Unknown'
+    if (value === 'Male' || value === 'Female' || value === 'Nonbinary' || value === 'Other' || value === 'Unknown') {
+      return value
+    }
+    const normalized = value.toLowerCase()
+    if (normalized.includes('female')) return 'Female'
+    if (normalized.includes('male')) return 'Male'
+    if (normalized.includes('nonbinary') || normalized.includes('non-binary')) return 'Nonbinary'
+    return 'Unknown'
+  }
+
   const buildPrefilledProfile = (
     existingProfile: CharacterStyleAssignment['profile'] | undefined,
-    cast: AniListCharacter,
+    cast: ImportedCharacter,
   ): CharacterStyleAssignment['profile'] => {
     const base = existingProfile ?? createDefaultProfile()
-    const analyzed = analyzeCharacterProfileFromAniList(cast)
+    const analyzed = analyzeCharacterProfileFromSource(cast)
     const nextTraits = base.speakingTraits.trim()
       ? base.speakingTraits
       : analyzed.speakingTraits ?? ''
@@ -3401,13 +3415,10 @@ interface CharacterModalProps {
     const nextSummary = base.personalitySummary.trim()
       ? base.personalitySummary
       : analyzed.personalitySummary ?? ''
-    const nextAniListDescription = base.anilistDescription.trim()
+    const nextDescription = base.anilistDescription.trim()
       ? base.anilistDescription
       : analyzed.anilistDescription ?? ''
-    const nextArchetype = base.archetype !== 'default'
-      ? base.archetype
-      : cast.inferredArchetype
-    const fallbackTypeFromLegacy = mapLegacyArchetypeToCharacterType(nextArchetype)
+    const fallbackTypeFromLegacy = mapLegacyArchetypeToCharacterType(base.archetype)
     const normalizedTypeSelection = normalizeCharacterTypeSelection(
       base.characterTypeId || fallbackTypeFromLegacy.typeId,
       base.characterSubtypeId || fallbackTypeFromLegacy.subtypeId,
@@ -3427,27 +3438,31 @@ interface CharacterModalProps {
 
     const mergedProfile = {
       ...base,
-      archetype: nextArchetype,
       characterTypeId: normalizedTypeSelection.typeId,
       characterSubtypeId: normalizedTypeSelection.subtypeId,
       characterUserNotes: base.characterUserNotes,
       speakingTraits: nextTraits,
       characterNote: nextNote,
       personalitySummary: nextSummary,
-      anilistDescription: nextAniListDescription,
+      anilistDescription: nextDescription,
       mannerOfAddress: nextMannerOfAddress,
       politenessLevel: nextPolitenessLevel,
       vocabularyType: nextVocabularyType,
       temperament: nextTemperament,
     }
     const analyzedProfile = mergeCharacterNotesAnalysisIntoProfile(mergedProfile, mergedProfile.characterUserNotes)
-    return applyAutoTranslationGender(analyzedProfile, cast.gender)
+    return applyAutoTranslationGender(analyzedProfile, normalizeImportedGender(cast.gender))
   }
 
   useEffect(() => {
     if (!open) return
     if (!workerCast.length) return
     setDraft(prev => {
+      const previousBySourceId = new Map(
+        prev.characters
+          .filter(character => character.sourceProvider && character.sourceCharacterId)
+          .map(character => [`${character.sourceProvider}:${character.sourceCharacterId}`, character]),
+      )
       const previousByAniListId = new Map(
         prev.characters
           .filter(character => Number.isFinite(character.anilistCharacterId))
@@ -3455,38 +3470,53 @@ interface CharacterModalProps {
       )
       const previousByNameRole = new Map(
         prev.characters.map(character => [
-          characterKeyFromNameRole(character.name, character.anilistRole),
+          characterKeyFromNameRole(character.name, character.sourceRole ?? character.anilistRole),
           character,
         ]),
       )
-      // Fallback lookup po samej nazwie — lapie auto-wykryte postacie (bez anilistCharacterId)
       const previousByName = new Map(
         prev.characters.map(character => [normalizeCharacterName(character.name), character]),
       )
       const nextCharacters = workerCast.map(cast => {
-        const existing = previousByAniListId.get(cast.id)
-          ?? previousByNameRole.get(characterKeyFromNameRole(cast.name, cast.roleLabel))
-          ?? previousByName.get(normalizeCharacterName(cast.name))
-        const gender = cast.gender !== 'Unknown'
-          ? cast.gender
+        const sourceKey = `${cast.source}:${cast.sourceCharacterId}`
+        const parsedSourceId = Number(cast.sourceCharacterId)
+        const existing = previousBySourceId.get(sourceKey)
+          ?? (cast.source === 'anilist' && Number.isFinite(parsedSourceId) ? previousByAniListId.get(parsedSourceId) : undefined)
+          ?? previousByNameRole.get(characterKeyFromNameRole(cast.nameFull, cast.role))
+          ?? previousByName.get(normalizeCharacterName(cast.nameFull))
+        const importedGender = normalizeImportedGender(cast.gender)
+        const gender = importedGender !== 'Unknown'
+          ? importedGender
           : (existing?.gender ?? 'Unknown')
 
         const prefilledProfile = buildPrefilledProfile(existing?.profile, cast)
         const nextProfile = applyAutoTranslationGender(prefilledProfile, gender)
 
+        const fallbackId = Number.isFinite(parsedSourceId)
+          ? parsedSourceId
+          : numericIdFromName(`${cast.source}:${cast.sourceCharacterId}:${cast.nameFull}`)
+
         return {
-          id: existing?.id ?? cast.id ?? numericIdFromName(cast.name),
-          name: cast.name,
-          displayName: existing?.displayName ?? cast.name,
-          originalName: existing?.originalName ?? cast.name,
-          anilistCharacterId: cast.id,
-          anilistRole: cast.roleLabel,
+          id: existing?.id ?? fallbackId,
+          name: cast.nameFull,
+          displayName: existing?.displayName ?? cast.nameFull,
+          originalName: existing?.originalName ?? cast.nameFull,
+          sourceProvider: cast.source,
+          sourceAnimeId: cast.sourceAnimeId,
+          sourceCharacterId: cast.sourceCharacterId,
+          sourceRole: cast.role,
+          sourceVoiceActorName: cast.voiceActorName,
+          sourceVoiceActorLanguage: cast.voiceActorLanguage,
+          sourceVoiceActorId: cast.voiceActorId,
+          sourceDescription: cast.description,
+          anilistCharacterId: cast.source === 'anilist' && Number.isFinite(parsedSourceId) ? parsedSourceId : existing?.anilistCharacterId ?? null,
+          anilistRole: cast.source === 'anilist' ? cast.role : existing?.anilistRole,
           imageUrl: existing?.imageUrl ?? cast.imageUrl ?? null,
           avatarPath: existing?.avatarPath ?? null,
           avatarUrl: existing?.avatarUrl ?? cast.imageUrl ?? null,
           gender,
-          avatarColor: existing?.avatarColor ?? cast.avatarColor ?? '#4f8ad6',
-          style: existing?.style ?? cast.inferredStyle ?? null,
+          avatarColor: existing?.avatarColor ?? '#4f8ad6',
+          style: existing?.style ?? null,
           profile: nextProfile,
         } satisfies CharacterStyleAssignment
       })
@@ -3563,77 +3593,41 @@ interface CharacterModalProps {
     [characterSourceId, apiConfig],
   )
 
-  const handleLoadCast = async (anime: AnimeSearchResult): Promise<void> => {
-    try {
-      setIsLoadingCast(true)
-      setSearchError('')
-      const cast = await characterSourceProvider.getCharactersForAnime({ animeId: anime.id, animeTitle: anime.title })
-      const dedupedCast = dedupeImportedCast(cast)
-      setSelectedAnime(anime)
-      setSelectedAnimeCast(dedupedCast)
-      onProjectMetaUpdate?.({
-        title: anime.title,
-        anilistId: characterSourceId === 'anilist' ? Number(anime.id) : null,
-        characterSource: characterSourceId,
-      })
-      setSelectedAniCastIds(new Set())
-      setImageCacheByName(prev => {
-        const next = { ...prev }
-        dedupedCast.forEach(character => {
-          const key = normalizeCharacterName(character.nameFull)
-          if (character.imageUrl) next[key] = character.imageUrl
-        })
-        return next
-      })
-      if (!dedupedCast.length) {
-        setSearchError(`Nie znaleziono postaci w wybranym zrodle (${characterSourceProvider.label}).`)
-      }
-    } catch (error) {
-      setSelectedAnime(anime)
-      setSelectedAnimeCast([])
-      setSearchError(error instanceof Error ? error.message : `Nie udalo sie pobrac postaci z ${characterSourceProvider.label}.`)
-    } finally {
-      setIsLoadingCast(false)
-    }
-  }
+  const {
+    search,
+    setSearch,
+    searchResults,
+    selectedAnime,
+    selectedAnimeCast: selectedAnimeCastRaw,
+    isSearching,
+    isLoadingCast,
+    searchError,
+    reset: resetImportState,
+    searchAnime: handleSearchCharacters,
+    loadCast: handleLoadCast,
+  } = useCharacterImportStep({
+    provider: characterSourceProvider,
+    characterSourceId,
+    onProjectMetaUpdate,
+  })
 
-  const handleSearchCharacters = async (): Promise<void> => {
-    const query = search.trim()
-    if (!query) {
-      setSearchResults([])
-      setSelectedAnime(null)
-      setSelectedAnimeCast([])
-      setSearchError('')
-      return
-    }
+  const selectedAnimeCast = useMemo(
+    () => dedupeImportedCast(selectedAnimeCastRaw),
+    [selectedAnimeCastRaw],
+  )
 
-    try {
-      const configStatus = characterSourceProvider.isConfigured()
-      if (!configStatus.ok) {
-        setSearchResults([])
-        setSelectedAnime(null)
-        setSelectedAnimeCast([])
-        setSearchError(configStatus.message || 'Wybrane API nie jest skonfigurowane.')
-        return
-      }
-      setIsSearching(true)
-      setSearchError('')
-      const results = await characterSourceProvider.searchAnime(query)
-      setSearchResults(results)
-      if (!results.length) {
-        setSelectedAnime(null)
-        setSelectedAnimeCast([])
-        setSearchError('Brak wynikow dla podanej nazwy anime.')
-      }
-    } catch (error) {
-      setSearchResults([])
-      setSelectedAnime(null)
-      setSelectedAnimeCast([])
-      setSearchError(error instanceof Error ? error.message : `Nie udalo sie pobrac wynikow z ${characterSourceProvider.label}.`)
-    } finally {
-      setIsSearching(false)
-    }
-  }
+  useEffect(() => {
+    setSelectedAniCastIds(new Set())
+    if (!selectedAnimeCast.length) return
+    setImageCacheByName(prev => {
+      const next = { ...prev }
+      selectedAnimeCast.forEach(character => {
+        const key = normalizeCharacterName(character.nameFull)
+        if (character.imageUrl) next[key] = character.imageUrl
+      })
+      return next
+    })
+  }, [selectedAnimeCast])
 
   const importCharactersFromSelectedAnime = (): void => {
     if (!workerCast.length) return
@@ -3668,6 +3662,7 @@ interface CharacterModalProps {
             description: (cast.description || '').length > (existing.description || '').length ? cast.description : existing.description,
             voiceActorName: existing.voiceActorName || cast.voiceActorName,
             voiceActorLanguage: existing.voiceActorLanguage || cast.voiceActorLanguage,
+            voiceActorId: existing.voiceActorId || cast.voiceActorId,
           }
           byName.set(key, { item: next[idx], idx })
           return
@@ -3748,10 +3743,7 @@ interface CharacterModalProps {
                     }}
                     onClick={() => {
                       setCharacterSourceId(source)
-                      setSearchResults([])
-                      setSelectedAnime(null)
-                      setSelectedAnimeCast([])
-                      setSearchError('')
+                      resetImportState()
                     }}
                   >
                     {source === 'anilist' ? 'AniList' : 'MyAnimeList'}
@@ -3894,7 +3886,10 @@ interface CharacterModalProps {
                           }}
                         >
                           <span style={{ fontSize: 11, color: C.textDim }}>{index + 1}</span>
-                          <span style={{ fontSize: 12 }}>{cast.nameFull}</span>
+                          <span style={{ fontSize: 12 }}>
+                            {cast.nameFull}
+                            <div style={{ fontSize: 10, color: C.textDim }}>{cast.source === 'anilist' ? 'AniList' : 'MAL'}</div>
+                          </span>
                           <span style={{ fontSize: 11, color: C.textDim }}>{cast.role ?? 'unknown'}</span>
                           <span style={{ fontSize: 11, color: genderColor((cast.gender ?? 'Unknown') as CharacterGender) }}>
                             {genderLabel((cast.gender ?? 'Unknown') as CharacterGender)}
@@ -3993,7 +3988,7 @@ interface CharacterModalProps {
                   {step2CastRows.length === 0 && (
                     <div style={{ padding: 10, color: C.textDim, fontSize: 12 }}>
                       {workerCast.length === 0
-                        ? 'Brak bazy postaci. Wroc do Kroku 1 i dodaj postacie z AniList.'
+                        ? `Brak bazy postaci. Wroc do Kroku 1 i dodaj postacie z ${characterSourceId === 'anilist' ? 'AniList' : 'MAL'}.`
                         : 'Brak postaci z Unknown dla aktualnego filtra.'}
                     </div>
                   )}
@@ -4075,7 +4070,7 @@ interface CharacterModalProps {
                   <div key={character.id} style={{ border: `1px solid ${C.border}`, background: '#242633', padding: 8 }}>
                     {(() => {
                       const key = normalizeCharacterName(character.name)
-                      const imageFromWorker = workerCast.find(item => normalizeCharacterName(item.name) === key)?.imageUrl ?? null
+                      const imageFromWorker = workerCast.find(item => normalizeCharacterName(item.nameFull) === key)?.imageUrl ?? null
                       const imageUrl = imageFromWorker || character.imageUrl || imageCacheByName[key] || null
                       const broken = brokenImageKeys.has(key)
                       return (
@@ -4302,7 +4297,7 @@ interface CharacterModalProps {
                           characters: prev.characters.map(item => item.id === character.id ? { ...item, profile: { ...item.profile, anilistDescription: nextValue } } : item),
                         }))
                       }}
-                      placeholder="Opis AniList"
+                      placeholder="Opis postaci"
                       rows={2}
                       style={{ marginTop: 4, width: '100%', background: C.surface, border: `1px solid ${C.border}`, color: C.text, fontSize: 10, padding: '4px 6px', resize: 'vertical' }}
                     />
@@ -4796,7 +4791,7 @@ export default function App(): React.ReactElement {
         gender: character.gender,
         translationGender: character.profile.translationGender,
         speakingStyle: character.profile.speakingStyle,
-        role: character.anilistRole,
+        role: character.sourceRole ?? character.anilistRole,
         avatarColor: character.avatarColor,
         imageUrl: character.imageUrl || assignmentImageCacheByName[key] || null,
       })

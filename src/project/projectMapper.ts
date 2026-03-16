@@ -50,6 +50,14 @@ export interface DiskProjectCharacter {
   name: string
   displayName?: string
   originalName?: string
+  sourceProvider?: string
+  sourceAnimeId?: string
+  sourceCharacterId?: string
+  sourceRole?: string
+  sourceVoiceActorName?: string
+  sourceVoiceActorLanguage?: string
+  sourceVoiceActorId?: string
+  sourceDescription?: string
   anilistCharacterId?: number | null
   anilistRole?: string
   imageUrl?: string | null
@@ -140,6 +148,14 @@ function mapCharacterToDisk(character: CharacterStyleAssignment): DiskProjectCha
     name: character.name,
     displayName: character.displayName,
     originalName: character.originalName,
+    sourceProvider: character.sourceProvider,
+    sourceAnimeId: character.sourceAnimeId,
+    sourceCharacterId: character.sourceCharacterId,
+    sourceRole: character.sourceRole,
+    sourceVoiceActorName: character.sourceVoiceActorName,
+    sourceVoiceActorLanguage: character.sourceVoiceActorLanguage,
+    sourceVoiceActorId: character.sourceVoiceActorId,
+    sourceDescription: character.sourceDescription,
     anilistCharacterId: character.anilistCharacterId ?? null,
     anilistRole: character.anilistRole,
     imageUrl: character.imageUrl ?? null,
@@ -217,6 +233,14 @@ function mapDiskToCharacter(character: DiskProjectCharacter, fallbackId: number)
     name: character.name || `Character_${fallbackId}`,
     displayName: character.displayName || character.name || `Character_${fallbackId}`,
     originalName: character.originalName || '',
+    sourceProvider: character.sourceProvider,
+    sourceAnimeId: character.sourceAnimeId,
+    sourceCharacterId: character.sourceCharacterId,
+    sourceRole: character.sourceRole,
+    sourceVoiceActorName: character.sourceVoiceActorName,
+    sourceVoiceActorLanguage: character.sourceVoiceActorLanguage,
+    sourceVoiceActorId: character.sourceVoiceActorId,
+    sourceDescription: character.sourceDescription,
     anilistCharacterId: character.anilistCharacterId ?? null,
     anilistRole: character.anilistRole,
     imageUrl: character.imageUrl ?? null,

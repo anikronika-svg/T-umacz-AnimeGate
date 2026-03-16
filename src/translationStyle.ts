@@ -50,6 +50,14 @@ export interface CharacterStyleAssignment {
   name: string
   displayName?: string
   originalName?: string
+  sourceProvider?: 'anilist' | 'mal'
+  sourceAnimeId?: string
+  sourceCharacterId?: string
+  sourceRole?: string
+  sourceVoiceActorName?: string
+  sourceVoiceActorLanguage?: string
+  sourceVoiceActorId?: string
+  sourceDescription?: string
   anilistCharacterId?: number | null
   anilistRole?: string
   imageUrl?: string | null
@@ -391,7 +399,7 @@ export function buildTranslationStyleContext(
     const short = character.profile.anilistDescription.length > 260
       ? `${character.profile.anilistDescription.slice(0, 260).trim()}...`
       : character.profile.anilistDescription
-    chunks.push(`Opis AniList (skrot): ${short}`)
+    chunks.push(`Opis postaci (skrot): ${short}`)
   }
 
   return chunks.join('\n')
