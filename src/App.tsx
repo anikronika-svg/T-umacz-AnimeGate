@@ -19,7 +19,8 @@ import {
   type ProjectTranslationStyleSettings,
   type TranslationStyleId,
 } from './translationStyle'
-import { getAnimeCharactersForSeries, searchAnimeByTitle, type AniListAnimeResult, type AniListCharacter } from './anilist'
+import type { AnimeSearchResult, CharacterSourceId, ImportedCharacter } from './characterSources/types'
+import { buildCharacterSourceProvider } from './characterSources/characterSourceRegistry'
 import { buildAssOrSsaContent, parseAssOrSsa, type ParsedSubtitleFile } from './subtitleParser'
 import { useUpdaterStatus, type UpdaterStatus } from './hooks/useUpdaterStatus'
 import {
@@ -54,7 +55,7 @@ import {
   resolveCharacterNameOrRaw,
   shouldCreatePlaceholderCharacter,
 } from './project/characterIdentityResolver'
-import { analyzeCharacterProfileFromAniList } from './project/characterProfileAnalysis'
+import { analyzeCharacterProfileFromSource } from './project/characterProfileAnalysis'
 import { mergeCharacterNotesAnalysisIntoProfile } from './project/characterNotesAnalysis'
 import {
   hasAssTechnicalMarkers,
@@ -170,6 +171,7 @@ interface SeriesProjectMeta {
   id: string
   title: string
   anilistId: number | null
+  characterSource?: CharacterSourceId
   preferredModelId: string
   sourceLang: string
   targetLang: string
@@ -204,6 +206,7 @@ function loadSeriesProjectsCatalog(): SeriesProjectMeta[] {
     id: DEFAULT_PROJECT_ID,
     title: 'Nagieko no Bourei wa Intai shitai',
     anilistId: null,
+    characterSource: 'anilist',
     preferredModelId: DEFAULT_TRANSLATION_MODEL_ID,
     sourceLang: 'en',
     targetLang: 'pl',
@@ -221,6 +224,7 @@ function loadSeriesProjectsCatalog(): SeriesProjectMeta[] {
         id: sanitizeProjectId(item.id) || DEFAULT_PROJECT_ID,
         title: item.title.trim() || 'Bez nazwy',
         anilistId: Number.isFinite(item.anilistId) ? item.anilistId : null,
+        characterSource: item.characterSource === 'mal' ? 'mal' : 'anilist',
         preferredModelId: item.preferredModelId || DEFAULT_TRANSLATION_MODEL_ID,
         sourceLang: item.sourceLang || 'en',
         targetLang: item.targetLang || 'pl',
@@ -3155,26 +3159,28 @@ interface CharacterModalProps {
   settings: ProjectTranslationStyleSettings
   rows: DialogRow[]
   projectId: string
-  projectMeta: { title: string; anilistId: number | null } | null
+  projectMeta: { title: string; anilistId: number | null; characterSource?: CharacterSourceId } | null
   onClose: () => void
   onSave: (next: ProjectTranslationStyleSettings) => void
-  onProjectMetaUpdate?: (meta: { title: string; anilistId: number | null }) => void
+  onProjectMetaUpdate?: (meta: { title: string; anilistId: number | null; characterSource?: CharacterSourceId }) => void
+  apiConfig: ApiConfig
 }
 
-function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose, onSave, onProjectMetaUpdate }: CharacterModalProps): React.ReactElement | null {
+  function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose, onSave, onProjectMetaUpdate, apiConfig }: CharacterModalProps): React.ReactElement | null {
   const [step, setStep] = useState<CharacterStep>('step1')
   const [draft, setDraft] = useState<ProjectTranslationStyleSettings>(settings)
   const [isCharacterNotesOpen, setCharacterNotesOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<AniListAnimeResult[]>([])
-  const [selectedAnime, setSelectedAnime] = useState<AniListAnimeResult | null>(null)
-  const [selectedAnimeCast, setSelectedAnimeCast] = useState<AniListCharacter[]>([])
+  const [characterSourceId, setCharacterSourceId] = useState<CharacterSourceId>('anilist')
+  const [searchResults, setSearchResults] = useState<AnimeSearchResult[]>([])
+  const [selectedAnime, setSelectedAnime] = useState<AnimeSearchResult | null>(null)
+  const [selectedAnimeCast, setSelectedAnimeCast] = useState<ImportedCharacter[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [isLoadingCast, setIsLoadingCast] = useState(false)
   const [searchError, setSearchError] = useState('')
-  const [workerCast, setWorkerCast] = useState<AniListCharacter[]>([])
-  const [selectedAniCastIds, setSelectedAniCastIds] = useState<Set<number>>(new Set())
-  const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<number>>(new Set())
+  const [workerCast, setWorkerCast] = useState<ImportedCharacter[]>([])
+  const [selectedAniCastIds, setSelectedAniCastIds] = useState<Set<string>>(new Set())
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<string>>(new Set())
   const [imageCacheByName, setImageCacheByName] = useState<Record<string, string>>({})
   const [brokenImageKeys, setBrokenImageKeys] = useState<Set<string>>(new Set())
   const [step2ShowUnknownOnly, setStep2ShowUnknownOnly] = useState(true)
@@ -3187,11 +3193,11 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     return `name:${normalizeCharacterName(name)}|role:${normalizedRole}`
   }
 
-  const dedupeAniListCast = (list: AniListCharacter[]): AniListCharacter[] => {
-    const byKey = new Map<string, AniListCharacter>()
+  const dedupeImportedCast = (list: ImportedCharacter[]): ImportedCharacter[] => {
+    const byKey = new Map<string, ImportedCharacter>()
     list.forEach(item => {
-      const normalizedName = normalizeCharacterName(item.name)
-      const key = normalizedName ? `name:${normalizedName}` : `id:${item.id}`
+      const normalizedName = normalizeCharacterName(item.nameFull)
+      const key = normalizedName ? `name:${normalizedName}` : `id:${item.sourceCharacterId}`
       const existing = byKey.get(key)
       if (!existing) {
         byKey.set(key, { ...item })
@@ -3199,20 +3205,17 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       }
       byKey.set(key, {
         ...existing,
-        id: existing.id || item.id,
-        name: existing.name || item.name,
+        nameFull: existing.nameFull || item.nameFull,
+        nameFirst: existing.nameFirst || item.nameFirst,
+        nameLast: existing.nameLast || item.nameLast,
+        nameNative: existing.nameNative || item.nameNative,
         imageUrl: existing.imageUrl || item.imageUrl,
-        roleLabel: existing.roleLabel === 'Unknown' ? item.roleLabel : existing.roleLabel,
-        gender: existing.gender === 'Unknown' && item.gender !== 'Unknown' ? item.gender : existing.gender,
-        description: existing.description.length >= item.description.length ? existing.description : item.description,
-        descriptionShort: existing.descriptionShort.length >= item.descriptionShort.length ? existing.descriptionShort : item.descriptionShort,
-        personalityTraits: [...new Set([...(existing.personalityTraits ?? []), ...(item.personalityTraits ?? [])])].slice(0, 8),
-        inferredArchetype: existing.inferredArchetype !== 'default' ? existing.inferredArchetype : item.inferredArchetype,
-        inferredStyle: existing.inferredStyle ?? item.inferredStyle ?? null,
-        inferredMannerOfAddress: existing.inferredMannerOfAddress || item.inferredMannerOfAddress,
-        inferredPolitenessLevel: existing.inferredPolitenessLevel || item.inferredPolitenessLevel,
-        inferredVocabularyType: existing.inferredVocabularyType || item.inferredVocabularyType,
-        inferredTemperament: existing.inferredTemperament || item.inferredTemperament,
+        gender: existing.gender || item.gender,
+        description: (existing.description || '').length >= (item.description || '').length ? existing.description : item.description,
+        role: existing.role !== 'unknown' ? existing.role : item.role,
+        voiceActorName: existing.voiceActorName || item.voiceActorName,
+        voiceActorLanguage: existing.voiceActorLanguage || item.voiceActorLanguage,
+        voiceActorId: existing.voiceActorId || item.voiceActorId,
       })
     })
     return [...byKey.values()]
@@ -3316,6 +3319,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
       setBrokenImageKeys(new Set())
       setStep2ShowUnknownOnly(true)
       setStep3Unlocked(false)
+      setCharacterSourceId(projectMeta?.characterSource ?? 'anilist')
       const fromSettings = buildImageCacheFromCharacters(settings.characters)
       try {
         const raw = localStorage.getItem(charImageCacheKey(projectId))
@@ -3551,37 +3555,49 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     return { applied, skipped }
   }
 
-  const handleLoadCast = async (anime: AniListAnimeResult): Promise<void> => {
+  const characterSourceProvider = useMemo(
+    () => buildCharacterSourceProvider(characterSourceId, {
+      malClientId: (apiConfig.mal ?? apiConfig['mal'] ?? '').trim(),
+      apiRequest: window.electronAPI?.apiRequest,
+    }),
+    [characterSourceId, apiConfig],
+  )
+
+  const handleLoadCast = async (anime: AnimeSearchResult): Promise<void> => {
     try {
       setIsLoadingCast(true)
       setSearchError('')
-      const cast = await getAnimeCharactersForSeries(anime.id)
-      const dedupedCast = dedupeAniListCast(cast)
+      const cast = await characterSourceProvider.getCharactersForAnime({ animeId: anime.id, animeTitle: anime.title })
+      const dedupedCast = dedupeImportedCast(cast)
       setSelectedAnime(anime)
       setSelectedAnimeCast(dedupedCast)
-      onProjectMetaUpdate?.({ title: anime.title, anilistId: anime.id })
+      onProjectMetaUpdate?.({
+        title: anime.title,
+        anilistId: characterSourceId === 'anilist' ? Number(anime.id) : null,
+        characterSource: characterSourceId,
+      })
       setSelectedAniCastIds(new Set())
       setImageCacheByName(prev => {
         const next = { ...prev }
         dedupedCast.forEach(character => {
-          const key = normalizeCharacterName(character.name)
+          const key = normalizeCharacterName(character.nameFull)
           if (character.imageUrl) next[key] = character.imageUrl
         })
         return next
       })
       if (!dedupedCast.length) {
-        setSearchError('Nie znaleziono postaci dla calej serii (sezony/coury) w AniList.')
+        setSearchError(`Nie znaleziono postaci w wybranym zrodle (${characterSourceProvider.label}).`)
       }
     } catch (error) {
       setSelectedAnime(anime)
       setSelectedAnimeCast([])
-      setSearchError(error instanceof Error ? error.message : 'Nie udalo sie pobrac postaci z AniList.')
+      setSearchError(error instanceof Error ? error.message : `Nie udalo sie pobrac postaci z ${characterSourceProvider.label}.`)
     } finally {
       setIsLoadingCast(false)
     }
   }
 
-  const handleSearchAniList = async (): Promise<void> => {
+  const handleSearchCharacters = async (): Promise<void> => {
     const query = search.trim()
     if (!query) {
       setSearchResults([])
@@ -3592,22 +3608,28 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     }
 
     try {
+      const configStatus = characterSourceProvider.isConfigured()
+      if (!configStatus.ok) {
+        setSearchResults([])
+        setSelectedAnime(null)
+        setSelectedAnimeCast([])
+        setSearchError(configStatus.message || 'Wybrane API nie jest skonfigurowane.')
+        return
+      }
       setIsSearching(true)
       setSearchError('')
-      const results = await searchAnimeByTitle(query)
+      const results = await characterSourceProvider.searchAnime(query)
       setSearchResults(results)
       if (!results.length) {
         setSelectedAnime(null)
         setSelectedAnimeCast([])
         setSearchError('Brak wynikow dla podanej nazwy anime.')
-      } else {
-        await handleLoadCast(results[0])
       }
     } catch (error) {
       setSearchResults([])
       setSelectedAnime(null)
       setSelectedAnimeCast([])
-      setSearchError(error instanceof Error ? error.message : 'Nie udalo sie pobrac wynikow AniList.')
+      setSearchError(error instanceof Error ? error.message : `Nie udalo sie pobrac wynikow z ${characterSourceProvider.label}.`)
     } finally {
       setIsSearching(false)
     }
@@ -3618,36 +3640,34 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     setStep('step2')
   }
 
-  const addCastToWorkerByIds = (ids: Set<number>): void => {
+  const addCastToWorkerByIds = (ids: Set<string>): void => {
     if (!ids.size) return
     setImageCacheByName(prev => {
       const next = { ...prev }
       selectedAnimeCast.forEach(cast => {
-        if (!ids.has(cast.id)) return
-        if (cast.imageUrl) next[normalizeCharacterName(cast.name)] = cast.imageUrl
+        if (!ids.has(cast.sourceCharacterId)) return
+        if (cast.imageUrl) next[normalizeCharacterName(cast.nameFull)] = cast.imageUrl
       })
       return next
     })
     setWorkerCast(prev => {
-      const byName = new Map(prev.map((item, idx) => [normalizeCharacterName(item.name), { item, idx }]))
-      const next: AniListCharacter[] = [...prev]
+      const byName = new Map(prev.map((item, idx) => [normalizeCharacterName(item.nameFull), { item, idx }]))
+      const next: ImportedCharacter[] = [...prev]
       selectedAnimeCast.forEach(cast => {
-        if (!ids.has(cast.id)) return
-        const key = normalizeCharacterName(cast.name)
+        if (!ids.has(cast.sourceCharacterId)) return
+        const key = normalizeCharacterName(cast.nameFull)
         const found = byName.get(key)
         if (found) {
           const { item: existing, idx } = found
           // Immutable update — nie mutujemy obiektow z prev
           next[idx] = {
             ...existing,
-            gender: existing.gender === 'Unknown' && cast.gender !== 'Unknown' ? cast.gender : existing.gender,
-            roleLabel: existing.roleLabel === 'Unknown' && cast.roleLabel !== 'Unknown' ? cast.roleLabel : existing.roleLabel,
-            imageUrl: existing.imageUrl || cast.imageUrl || null,
-            description: cast.description.length > existing.description.length ? cast.description : existing.description,
-            descriptionShort: cast.descriptionShort.length > existing.descriptionShort.length ? cast.descriptionShort : existing.descriptionShort,
-            personalityTraits: cast.personalityTraits.length > 0
-              ? [...new Set([...(existing.personalityTraits ?? []), ...cast.personalityTraits])].slice(0, 6)
-              : existing.personalityTraits,
+            gender: existing.gender || cast.gender,
+            role: existing.role !== 'unknown' ? existing.role : cast.role,
+            imageUrl: existing.imageUrl || cast.imageUrl,
+            description: (cast.description || '').length > (existing.description || '').length ? cast.description : existing.description,
+            voiceActorName: existing.voiceActorName || cast.voiceActorName,
+            voiceActorLanguage: existing.voiceActorLanguage || cast.voiceActorLanguage,
           }
           byName.set(key, { item: next[idx], idx })
           return
@@ -3656,7 +3676,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         next.push(cast)
         byName.set(key, { item: cast, idx: newIdx })
       })
-      return dedupeAniListCast(next)
+      return dedupeImportedCast(next)
     })
   }
 
@@ -3665,7 +3685,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
   }
 
   const selectAllAniCast = (): void => {
-    setSelectedAniCastIds(new Set(selectedAnimeCast.map(cast => cast.id)))
+    setSelectedAniCastIds(new Set(selectedAnimeCast.map(cast => cast.sourceCharacterId)))
   }
 
   const clearAniCastSelection = (): void => {
@@ -3673,12 +3693,12 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
   }
 
   const addAllCastToWorker = (): void => {
-    addCastToWorkerByIds(new Set(selectedAnimeCast.map(cast => cast.id)))
+    addCastToWorkerByIds(new Set(selectedAnimeCast.map(cast => cast.sourceCharacterId)))
   }
 
   const removeSelectedWorker = (): void => {
     if (!selectedWorkerIds.size) return
-    setWorkerCast(prev => prev.filter(item => !selectedWorkerIds.has(item.id)))
+    setWorkerCast(prev => prev.filter(item => !selectedWorkerIds.has(item.sourceCharacterId)))
     setSelectedWorkerIds(new Set())
   }
 
@@ -3691,7 +3711,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     <div style={{ position: 'fixed', inset: 0, zIndex: 1001, background: 'rgba(8,8,12,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 14 }}>
       <div style={{ width: 'min(1200px, 98vw)', maxHeight: '94vh', background: '#1b1d27', border: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column' }}>
         <div style={{ height: 32, borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 10px' }}>
-          <span style={{ fontWeight: 700 }}>Postacie AniList - przypisywanie do linii</span>
+          <span style={{ fontWeight: 700 }}>Źródło postaci i przypisywanie do linii</span>
           <button style={{ ...BASE_BTN, height: 24 }} onClick={onClose}>X</button>
         </div>
 
@@ -3712,7 +3732,37 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 10 }}>
           {step === 'step1' && (
             <>
-              <div style={{ color: C.accent, fontWeight: 700, marginBottom: 8 }}>Wyszukaj anime w AniList (API)</div>
+              <div style={{ color: C.accent, fontWeight: 700, marginBottom: 8 }}>
+                {characterSourceId === 'anilist' ? 'Wyszukaj anime w AniList (API)' : 'Wyszukaj anime w MyAnimeList (API)'}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                <div style={{ fontSize: 12, color: C.textDim }}>Źródło:</div>
+                {(['anilist', 'mal'] as CharacterSourceId[]).map(source => (
+                  <button
+                    key={source}
+                    style={{
+                      ...BASE_BTN,
+                      height: 26,
+                      background: characterSourceId === source ? '#2d4b7d' : C.bg3,
+                      borderColor: characterSourceId === source ? '#3f7ed2' : C.border,
+                    }}
+                    onClick={() => {
+                      setCharacterSourceId(source)
+                      setSearchResults([])
+                      setSelectedAnime(null)
+                      setSelectedAnimeCast([])
+                      setSearchError('')
+                    }}
+                  >
+                    {source === 'anilist' ? 'AniList' : 'MyAnimeList'}
+                  </button>
+                ))}
+                {!characterSourceProvider.isConfigured().ok && (
+                  <span style={{ fontSize: 11, color: C.accentR }}>
+                    {characterSourceProvider.isConfigured().message}
+                  </span>
+                )}
+              </div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <input
                   value={search}
@@ -3720,7 +3770,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   placeholder="Nazwa anime..."
                   style={{ flex: 1, height: 28, background: C.surface, border: `1px solid ${C.border}`, color: C.text, padding: '0 8px' }}
                 />
-                <button style={{ ...BASE_BTN, height: 28 }} onClick={() => { void handleSearchAniList() }} disabled={isSearching}>
+                <button style={{ ...BASE_BTN, height: 28 }} onClick={() => { void handleSearchCharacters() }} disabled={isSearching}>
                   {isSearching ? 'Szukam...' : 'Szukaj'}
                 </button>
               </div>
@@ -3744,13 +3794,13 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
               </div>
               {!searchResults.length && !isSearching && !searchError && (
                 <div style={{ fontSize: 12, color: C.textDim, marginTop: 6 }}>
-                  Wpisz tytul i kliknij `Szukaj`, aby pobrac anime z API AniList.
+                  Wpisz tytul i kliknij `Szukaj`, aby pobrac anime z API.
                 </div>
               )}
               <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, minHeight: 420 }}>
                 <div style={{ border: `1px solid ${C.border}`, background: '#212432', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                   <div style={{ padding: '8px 10px', borderBottom: `1px solid ${C.border}`, color: C.accent, fontWeight: 700, fontSize: 12 }}>
-                    Postacie z AniList {selectedAnime ? `- ${selectedAnime.title}` : ''}
+                    Postacie z {characterSourceId === 'anilist' ? 'AniList' : 'MyAnimeList'} {selectedAnime ? `- ${selectedAnime.title}` : ''}
                   </div>
                   <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, borderBottom: `1px solid ${C.border}` }}>
                     <span style={{ fontSize: 12, color: C.textDim }}>Zaladowano: {selectedAnimeCast.length}</span>
@@ -3764,14 +3814,14 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   </div>
                   <div style={{ padding: 8, overflow: 'auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
                     {selectedAnimeCast.map(cast => {
-                      const picked = selectedAniCastIds.has(cast.id)
+                      const picked = selectedAniCastIds.has(cast.sourceCharacterId)
                       return (
                         <button
-                          key={cast.id}
+                          key={cast.sourceCharacterId}
                           onClick={() => setSelectedAniCastIds(prev => {
                             const next = new Set(prev)
-                            if (next.has(cast.id)) next.delete(cast.id)
-                            else next.add(cast.id)
+                            if (next.has(cast.sourceCharacterId)) next.delete(cast.sourceCharacterId)
+                            else next.add(cast.sourceCharacterId)
                             return next
                           })}
                           style={{
@@ -3785,12 +3835,15 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                         >
                           <div style={{ height: 92, border: `1px solid ${C.borderB}`, background: '#12131b', overflow: 'hidden', marginBottom: 6 }}>
                             {cast.imageUrl
-                              ? <img src={cast.imageUrl} alt={cast.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              : <div style={{ width: '100%', height: '100%', background: cast.avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>{cast.name.slice(0, 1)}</div>}
+                              ? <img src={cast.imageUrl} alt={cast.nameFull} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              : <div style={{ width: '100%', height: '100%', background: '#1c1f2a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700 }}>{cast.nameFull.slice(0, 1)}</div>}
                           </div>
-                          <div style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.2 }}>{cast.name}</div>
-                          <div style={{ fontSize: 11, color: C.textDim }}>{cast.roleLabel}</div>
-                          <div style={{ fontSize: 11, color: genderColor(cast.gender), marginTop: 2 }}>{genderLabel(cast.gender)}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.2 }}>{cast.nameFull}</div>
+                          <div style={{ fontSize: 11, color: C.textDim }}>{cast.role ?? 'unknown'}</div>
+                          {cast.gender && <div style={{ fontSize: 11, color: genderColor(cast.gender as CharacterGender), marginTop: 2 }}>{genderLabel(cast.gender as CharacterGender)}</div>}
+                          <div style={{ marginTop: 4, fontSize: 10, color: C.textDim }}>
+                            {cast.source === 'anilist' ? 'AniList' : 'MAL'}
+                          </div>
                         </button>
                       )
                     })}
@@ -3820,14 +3873,14 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   </div>
                   <div style={{ overflow: 'auto', flex: 1 }}>
                     {workerCast.map((cast, index) => {
-                      const selected = selectedWorkerIds.has(cast.id)
+                      const selected = selectedWorkerIds.has(cast.sourceCharacterId)
                       return (
                         <div
-                          key={cast.id}
+                          key={cast.sourceCharacterId}
                           onClick={() => setSelectedWorkerIds(prev => {
                             const next = new Set(prev)
-                            if (next.has(cast.id)) next.delete(cast.id)
-                            else next.add(cast.id)
+                            if (next.has(cast.sourceCharacterId)) next.delete(cast.sourceCharacterId)
+                            else next.add(cast.sourceCharacterId)
                             return next
                           })}
                           style={{
@@ -3841,9 +3894,11 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                           }}
                         >
                           <span style={{ fontSize: 11, color: C.textDim }}>{index + 1}</span>
-                          <span style={{ fontSize: 12 }}>{cast.name}</span>
-                          <span style={{ fontSize: 11, color: C.textDim }}>{cast.roleLabel}</span>
-                          <span style={{ fontSize: 11, color: genderColor(cast.gender) }}>{genderLabel(cast.gender)}</span>
+                          <span style={{ fontSize: 12 }}>{cast.nameFull}</span>
+                          <span style={{ fontSize: 11, color: C.textDim }}>{cast.role ?? 'unknown'}</span>
+                          <span style={{ fontSize: 11, color: genderColor((cast.gender ?? 'Unknown') as CharacterGender) }}>
+                            {genderLabel((cast.gender ?? 'Unknown') as CharacterGender)}
+                          </span>
                         </div>
                       )
                     })}
@@ -3879,19 +3934,21 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                   <span>#</span>
                   <span>Postac (z bazy Kroku 1)</span>
                   <span>Linii</span>
-                  <span>Plec z AniList</span>
+                  <span>Plec z {characterSourceId === 'anilist' ? 'AniList' : 'MAL'}</span>
                   <span>Plec</span>
                 </div>
                 <div style={{ maxHeight: 360, overflow: 'auto' }}>
                   {step2CastRows.map((item, index) => {
-                    const current = draft.characters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.name)) ?? item
-                    const lineCount = detectedCharacters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.name))?.lineCount ?? 0
+                    const current = draft.characters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.nameFull)) ?? item
+                    const lineCount = detectedCharacters.find(character => normalizeCharacterName(character.name) === normalizeCharacterName(item.nameFull))?.lineCount ?? 0
                     return (
-                      <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '42px 1fr 110px 130px 130px', gap: 8, padding: '6px 8px', borderBottom: `1px solid ${C.borderB}`, alignItems: 'center' }}>
+                      <div key={item.sourceCharacterId} style={{ display: 'grid', gridTemplateColumns: '42px 1fr 110px 130px 130px', gap: 8, padding: '6px 8px', borderBottom: `1px solid ${C.borderB}`, alignItems: 'center' }}>
                         <span style={{ fontSize: 11, color: C.textDim }}>{index + 1}</span>
-                        <span style={{ fontSize: 12 }}>{item.name}</span>
+                        <span style={{ fontSize: 12 }}>{item.nameFull}</span>
                         <span style={{ fontSize: 11, color: C.textDim }}>{lineCount}</span>
-                        <span style={{ fontSize: 11, color: genderColor(item.gender) }}>{genderLabel(item.gender)}</span>
+                        <span style={{ fontSize: 11, color: genderColor((item.gender ?? 'Unknown') as CharacterGender) }}>
+                          {genderLabel((item.gender ?? 'Unknown') as CharacterGender)}
+                        </span>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
                           <button
                             style={{
@@ -3901,7 +3958,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                               background: current.gender === 'Male' ? '#2d4b7d' : '#383a52',
                               borderColor: current.gender === 'Male' ? '#3f7ed2' : C.border,
                             }}
-                            onClick={() => applyGenderForCharacter(item.name, 'Male')}
+                            onClick={() => applyGenderForCharacter(item.nameFull, 'Male')}
                           >
                             M
                           </button>
@@ -3913,7 +3970,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                               background: current.gender === 'Female' ? '#2d4b7d' : '#383a52',
                               borderColor: current.gender === 'Female' ? '#3f7ed2' : C.border,
                             }}
-                            onClick={() => applyGenderForCharacter(item.name, 'Female')}
+                            onClick={() => applyGenderForCharacter(item.nameFull, 'Female')}
                           >
                             K
                           </button>
@@ -3925,7 +3982,7 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
                               background: current.gender === 'Unknown' ? '#2d4b7d' : '#383a52',
                               borderColor: current.gender === 'Unknown' ? '#3f7ed2' : C.border,
                             }}
-                            onClick={() => applyGenderForCharacter(item.name, 'Unknown')}
+                            onClick={() => applyGenderForCharacter(item.nameFull, 'Unknown')}
                           >
                             N
                           </button>
@@ -4284,31 +4341,32 @@ function CharacterModal({ open, settings, rows, projectId, projectMeta, onClose,
     </div>
   )
 }
-function LinesView({
-  rows,
-  hasActiveProject,
-  selectedId,
-  selectedIds,
-  translatingLineId,
-  autoCorrectingLineId,
-  onSelect,
-  onActivateLine,
-  getGenderForCharacter,
-  onSyncCharacters,
-  selectedCount,
-}: {
+function LinesView(props: {
   rows: DialogRow[]
   hasActiveProject: boolean
   selectedId: number
   selectedIds: Set<number>
   translatingLineId: number | null
-  autoCorrectingLineId: number | null
+  autoCorrectingLineId?: number | null
   onSelect: (id: number, opts?: { additive?: boolean; range?: boolean }) => void
   onActivateLine: (id: number) => void
   getGenderForCharacter: (characterName: string) => CharacterGender | undefined
   onSyncCharacters: () => void
   selectedCount: number
 }): React.ReactElement {
+  const {
+    rows,
+    hasActiveProject,
+    selectedId,
+    selectedIds,
+    translatingLineId,
+    autoCorrectingLineId = null,
+    onSelect,
+    onActivateLine,
+    getGenderForCharacter,
+    onSyncCharacters,
+    selectedCount,
+  } = props
   const listRef = useRef<HTMLDivElement | null>(null)
   const col = '30px 34px 94px 94px 78px 122px 1fr 1fr'
   const headers = ['⚥', '#', 'Start', 'Koniec', 'Styl', 'Postac', 'Oryginal', 'Tlumaczenie']
@@ -4640,6 +4698,7 @@ export default function App(): React.ReactElement {
           id: projectId,
           title: updates.title?.trim() || projectId,
           anilistId: updates.anilistId ?? null,
+          characterSource: updates.characterSource ?? 'anilist',
           preferredModelId: updates.preferredModelId || selectedModelId,
           sourceLang: updates.sourceLang || sourceLang,
           targetLang: updates.targetLang || targetLang,
@@ -4652,10 +4711,12 @@ export default function App(): React.ReactElement {
       const nextPreferredModelId = updates.preferredModelId ?? existing.preferredModelId
       const nextSourceLang = updates.sourceLang ?? existing.sourceLang
       const nextTargetLang = updates.targetLang ?? existing.targetLang
+      const nextCharacterSource = updates.characterSource ?? existing.characterSource
 
       const hasAnyChange = (
         nextTitle !== existing.title
         || nextAnilistId !== existing.anilistId
+        || nextCharacterSource !== existing.characterSource
         || nextPreferredModelId !== existing.preferredModelId
         || nextSourceLang !== existing.sourceLang
         || nextTargetLang !== existing.targetLang
@@ -4669,6 +4730,7 @@ export default function App(): React.ReactElement {
             ...updates,
             title: nextTitle,
             anilistId: nextAnilistId,
+            characterSource: nextCharacterSource,
             preferredModelId: nextPreferredModelId,
             sourceLang: nextSourceLang,
             targetLang: nextTargetLang,
@@ -5239,12 +5301,13 @@ export default function App(): React.ReactElement {
     })
   }
 
-  const handleProjectMetaUpdate = (meta: { title: string; anilistId: number | null }): void => {
+  const handleProjectMetaUpdate = (meta: { title: string; anilistId: number | null; characterSource?: CharacterSourceId }): void => {
     const normalizedTitle = meta.title.trim()
     if (!normalizedTitle) return
     upsertSeriesProjectMeta(currentProjectId, {
       title: normalizedTitle,
       anilistId: meta.anilistId,
+      characterSource: meta.characterSource,
     })
     setMemoryStore(prev => ({
       ...prev,
@@ -5305,10 +5368,12 @@ export default function App(): React.ReactElement {
     const target = hydrated.targetLang || 'pl'
     const anilistId = Number.isFinite(hydrated.anilistId) ? hydrated.anilistId : null
 
+    const existingMeta = seriesProjects.find(item => item.id === projectId)
     const nextMeta: SeriesProjectMeta = {
       id: projectId,
       title: projectTitle,
       anilistId,
+      characterSource: existingMeta?.characterSource ?? 'anilist',
       preferredModelId,
       sourceLang: source,
       targetLang: target,
@@ -9751,11 +9816,13 @@ export default function App(): React.ReactElement {
           ? {
             title: activeSeriesMeta.title,
             anilistId: activeSeriesMeta.anilistId,
+            characterSource: activeSeriesMeta.characterSource,
           }
           : null}
         onClose={() => setCharactersOpen(false)}
         onSave={saveStyles}
         onProjectMetaUpdate={handleProjectMetaUpdate}
+        apiConfig={apiConfig}
       />
       <MemoryModal
         open={isMemoryOpen}
